@@ -87,6 +87,12 @@ unscored?", the report answers with one of the three reasons above.
 Starting points, with the score each one produces. All numbers below were computed with the bundled
 FIRST reference port — reproduce any of them with the same vector.
 
+The port itself is checked against FIRST's calculator, not against this table:
+`tests/fixtures/cvss4_reference_vectors.json` holds 517 vector/score/MacroVector triples produced by
+running the reference implementation over a systematic walk of the Metric Space (one representative
+for each *reachable* MacroVector — 270 are published, only 180 can occur — plus modified-metric and
+Safety vectors). `tests/test_cvss4.py` replays every one of them.
+
 | Class | Base vector (prefix `CVSS:4.0/`) | Score | Band |
 | - | - | - | - |
 | SQL injection, unauthenticated | `AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N` | 9.3 | Critical |
