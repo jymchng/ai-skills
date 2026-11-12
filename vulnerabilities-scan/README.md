@@ -62,8 +62,8 @@ python3 scripts/scanner_orchestrator.py --list-tools     # the matrix above, as 
 the tickets, and records the PDF as `unavailable` with the exact reason (missing binary versus LaTeX
 error with the log tail). A missing PDF is never a fabricated file.
 
-**Tested on.** Python 3.13.13 with no network and no external scanners installed; 278 tests pass
-(≈32 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
+**Tested on.** Python 3.13.13 with no network and no external scanners installed; 307 tests pass
+(≈40 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
 verified interpreter and 3.8 as a documented floor, not a promise.
 
 ---
@@ -346,7 +346,7 @@ State these in the report, not just in this file.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q          # 278 tests, ~32 s, offline, writes only under .scratch/
+python3 -m pytest tests -q          # 307 tests, ~40 s, offline, writes only under .scratch/
 ```
 
 - `tests/fixtures/vulnerable-app/` — 24 files covering the 20 required vulnerability classes across

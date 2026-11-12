@@ -17,7 +17,7 @@ rather than omitted.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q            # 278 tests
+python3 -m pytest tests -q            # 307 tests
 ```
 
 The end-to-end audit is `tests/test_end_to_end_audit.py`; it runs both fixture corpora through all
@@ -72,19 +72,19 @@ of intent.
 | 12 | Templates | `templates/report.md.j2`, `templates/report.html.j2`, `templates/report.css` | self-contained HTML, no CDN, escaped untrusted content, print styles |
 | 13 | Renderers | `scripts/generate_markdown.py`, `generate_html.py`, `generate_pdf.py`, `generate_json.py`, `generate_reports.py` | one dataset rendered to every format, plus tickets, `findings-index.json` and `report-manifest.json` |
 | 14 | Report validator | `scripts/validate_reports.py` | exit 0 with 0 problems on both corpora (section 4); `--require-pdf` escalates a missing PDF |
-| 15 | Fixtures and test suite | `tests/` | 11 test modules plus `conftest.py`, 50 fixture files (24 vulnerable-app, 24 secure-app, 2 expectation data), 278 tests |
+| 15 | Fixtures and test suite | `tests/` | 13 test modules plus `conftest.py`, 50 fixture files (24 vulnerable-app, 24 secure-app, 2 expectation data), 307 tests |
 | 16 | Research and validation record | `docs/RESEARCH.md`, `docs/RESEARCH-SOURCES.json`, `docs/VALIDATION-RESULTS.md`, `README.md` | dated sources with SHA-256 digests; this document; the human-facing install/use guide |
 
 Re-measure the inventory rather than trusting the table:
 
 ```bash
-git ls-files | wc -l                        # 99 tracked files
+git ls-files | wc -l                        # 101 tracked files
 git ls-files references | wc -l             # 8
-git ls-files tests/test_*.py | wc -l        # 11
+git ls-files tests/test_*.py | wc -l        # 13
 git ls-files tests/fixtures | wc -l         # 50
 for s in scripts/*.py; do python3 "$s" --help >/dev/null || echo "no --help: $s"; done
                                             # prints nothing: all 17 modules accept --help
-python3 -m pytest tests -q                  # 278 passed
+python3 -m pytest tests -q                  # 307 passed
 ```
 
 Everything after this section is measurement. This section is the inventory that measurement
@@ -95,7 +95,7 @@ attaches to.
 ## 3. Test suite
 
 ```
-278 passed in 33.02s
+307 passed in 39.61s
 ```
 
 | Test module | Tests | What it pins |
@@ -106,12 +106,14 @@ attaches to.
 | `test_deduplicate_findings.py` | 27 | Fingerprints, line windows, cross-file merges, provenance |
 | `test_report_generation.py` | 25 | Markdown/HTML/JSON renderers, per-finding JSON, index, manifest, determinism |
 | `test_scanner_orchestrator.py` | 22 | Tool discovery, timeouts, unavailable-tool accounting |
-| `test_builtin_analyzers.py` | 16 | Rule matching per category, secure look-alike silence |
+| `test_builtin_analyzers.py` | 22 | Rule matching per category, secure look-alike silence, self-scan precision |
+| `test_attack_surface.py` | 22 | Route/framework extraction, auth heuristics, route-bearing code no rule can enumerate |
 | `test_end_to_end_audit.py` | 13 | The two corpora, eight stages, artefact consistency, twin difference |
 | `test_repository_inventory.py` | 12 | File discovery, excluded directories, language classification, budgets |
-| `test_attack_surface.py` | 10 | Route/framework extraction and auth heuristics |
 | `test_detect_technologies.py` | 10 | Language/manifest/import detection |
-| **Total** | **278** | |
+| `test_redaction_markers.py` | 6 | One marker spelling per credential shape, identical across all three redacting stages |
+| `test_push_protection_literals.py` | 5 | No live-credential shape anywhere in the tracked tree |
+| **Total** | **307** | |
 
 Every module runs offline and writes only under `.scratch/` (git-ignored).
 
@@ -131,7 +133,7 @@ categories covered.
 |---|---|---|
 | Inventory | — | 24 files scanned |
 | Technologies | 24 files | 8 application languages, 19 frameworks/imports incl. PyJWT, jsonwebtoken, and 7 runtimes |
-| Attack surface | 24 files | 14 HTTP routes (9 GET / 5 POST), 14 without visible auth, 4 auth mechanisms, 1 non-HTTP surface |
+| Attack surface | 24 files | 14 HTTP routes (9 GET / 5 POST), 14 without visible auth, 3 auth mechanisms, 0 non-HTTP surfaces, 1 file carrying routes no rule can enumerate |
 | Analyzers | 24 files | **120 findings** |
 | Dedupe | 120 | **108 findings** (12 duplicates removed, 0 without provenance) |
 | Validation | 108 | 108 findings; 2 suppressed; 2 secrets redacted; **0 leaks** |
@@ -140,6 +142,14 @@ categories covered.
 The 120 → 108 drop is the deduplicator merging adjacent same-fingerprint reports (e.g. the
 Terraform misconfiguration cluster in `infra/terraform/main.tf`), not findings being dropped for
 inconvenience: `dedupe.merges` records every merge with the kept and dropped locations.
+
+The attack-surface row is measured after the stage-2 precision fixes (defects 6 and 8): the phantom
+non-HTTP surface and one phantom mechanism are gone, and the ASP.NET Core controller that no route
+rule can enumerate is now counted instead of silently contributing nothing. `unenumerable_routes`
+holds one record per such file (`dotnet/OrdersController.cs:11`, a `Controller`-derived class with 9
+candidate action methods) and the same fact is stated in `limitations`, so a zero-route result for a
+controller file reads as a coverage gap rather than as "no endpoints". No finding count in this
+document moves because of it: the record adds context, not detections.
 
 ### 3.2 Required detection classes
 
@@ -298,6 +308,7 @@ The suite was written to break the pipeline, and it did. Each fix below is now p
 | 5 | Findings had no per-finding machine-readable file | "Which JSON describes VULN-042?" had no answer | `OUTPUT_NAMES["index"]`, `build_index()`, index wired into `generate_reports.py` |
 | 6 | Not from this run: a later self-scan of `scripts/` reported 126 non-HTTP surfaces and 10 auth mechanisms | Reconnaissance read its own rule tables, docstrings and a commented-out decorator as live entry points and controls | `discover_auth` / `discover_non_http` now run against a comment- and string-blanked view with offsets preserved, non-HTTP rules must name a mechanism, and one surface is reported per kind per file; `test_self_scan_invents_no_surfaces` pins the result (16 real `__main__` guards, 0 web surfaces, 0 mechanisms) |
 | 7 | Each redacting stage kept its own copy of the marker text | One Stripe key read `[REDACTED STRIPE SECRET KEY]` from the orchestrator and `[REDACTED STRIPE KEY]` from the validator, so VULN-003's evidence showed two labels for one shape | `builtin_analyzers.SECRET_PATTERNS` is now `(id, pattern, label, marker)` and the single source of the spelling; `finding_model.shape_marker` / `redact_shape_match` build and apply it for all three stages, which removed the duplicated pattern tables from `validate_findings` and `scanner_orchestrator`; `tests/test_redaction_markers.py` asserts one identical marker per shape across the three, that a marker survives a second stage unchanged, and that `_shape_replacement`'s docstring keeps balanced code spans. While correcting that docstring: its example spelled a credential-shaped assignment, which every redaction-aware tool then masked in its own output and made the sentence look truncated — the example is gone, and the wording now describes what the function keeps (assignment name, URL authority) instead of the retired length marker |
+| 8 | Not from this run: `attack_surface.py` reported nothing at all for a convention-routed ASP.NET Core controller | The C# fixtures route by convention (no `[HttpGet]`/`[Route]`, a `.csproj` with no ASP.NET package reference), so they produced zero entry points *and* zero limitations: an unenumerable web app read exactly like an app with no endpoints, and the limitation that existed only fired for frameworks stage 2a *named* | New `CONTROLLER_STYLE_RULES` recognises a `Controller`/`ControllerBase`-derived class in the code-only view, `CONTROLLER_FRAMEWORK_SIGNALS` catches `using Microsoft.AspNetCore.Mvc` and `[ApiController]` when no route matched, and each such file becomes an `unenumerable_routes` record (`file`, `line`, `basis`, `class`, bounded `candidate_actions`, never an invented path) plus one aggregated limitation that says a zero-route result is a coverage gap. `test_attack_surface.py` pins both fixtures' gap, the attribute-routed negative case (a real route is never relabelled as a gap), the framework-signal-only case, the commented-out-controller negative case, and that no record carries a `path` |
 
 Defect 5 came from a requirements change mid-validation (every finding must have its own JSON,
 aggregate metadata its own file) and is the reason `references/reporting-standard.md` gained its
@@ -323,14 +334,17 @@ behaviour was a real precision bug in the stage this document treats as ground t
    informational warning ("the manifest lists no pdf format, so this run requested only html, json,
    markdown") rather than a problem, and `--require-pdf` turns a missing PDF into a failure once the
    toolchain is present. No claim in this document depends on a PDF existing.
-3. **Route-bearing code with no enumerable routes.** The ASP.NET Core controller and parts of the
-   Java servlet are not enumerated by `attack_surface.py`, so findings in them carry no route
-   context. Recorded as outstanding work; it affects context quality, not detection counts.
+3. **Route-bearing code with no enumerable routes.** Convention-routed code is not enumerated:
+   `attack_surface.py` reports the ASP.NET Core controller in both corpora (and any other
+   `Controller`-derived class) as an `unenumerable_routes` record plus a limitation, but does not
+   invent the `/Orders/List`-style URL its action names imply; the Java servlet remains unenumerated
+   and is named as a framework with no route rule. Findings in those files therefore carry no route
+   context. Stated, counted, and still a gap: it affects context quality, not detection counts.
 4. **Fixture corpora, not real repositories.** 24 files each is enough to exercise every rule and
    both directions of the false-positive question, but it is not a measurement of precision on a
    production codebase. The corpora are the regression contract; production precision is unknown
    until the skill is run against real repositories.
-5. **Timings are for an idle machine** (33 s for 278 tests, ≈5 s for both corpora) and include no
+5. **Timings are for an idle machine** (40 s for 307 tests, ≈5 s for both corpora) and include no
    network or scanner latency, so they are a floor, not a budget.
 
 ---

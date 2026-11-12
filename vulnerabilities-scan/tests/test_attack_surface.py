@@ -236,6 +236,95 @@ def test_undecomposable_frameworks_are_named_as_a_limitation(surface):
     assert "java servlet" in joined
 
 
+def test_convention_routed_controller_is_reported_as_a_coverage_gap(surface):
+    """A controller class is a route surface even with no route text to match.
+
+    The corpus's ASP.NET Core controller routes by convention: no ``[HttpGet]``,
+    no ``[Route]``, and a ``.csproj`` that never names the web package. Before
+    this check the file contributed zero entry points *and* no limitation, so a
+    reader saw the same output for "this app has no endpoints" and "this stage
+    cannot see this app's endpoints".
+    """
+    records = surface["unenumerable_routes"]
+    assert len(records) == 1, records
+    record = records[0]
+    assert record["file"] == "dotnet/OrdersController.cs"
+    assert record["language"] == "csharp"
+    assert record["framework"] == "asp.net core"
+    assert record["basis"] == "controller_base_class"
+    assert record["class"] == "OrdersController"
+    assert record["base"] == "Controller"
+    assert record["line"] == 11
+    assert surface["summary"]["unenumerable_routes"] == len(records)
+
+    # The action names are *candidates*: conventions say these are endpoints, but
+    # this stage never invents the URL for one, so no entry point is created and
+    # the paths stay empty.
+    assert {"List", "Report", "Download"} <= set(record["candidate_actions"])
+    assert record["candidate_action_count"] == len(record["candidate_actions"])
+    assert not any(entry["file"].endswith(".cs") for entry in surface["entry_points"])
+
+    limitation = " ".join(surface["limitations"])
+    assert "ASP.NET Core" in limitation
+    assert "dotnet/OrdersController.cs:11" in limitation
+    assert "coverage gap" in limitation
+    assert "not evidence that they expose no endpoint" in limitation
+
+
+def test_a_controller_is_only_a_gap_when_no_route_was_found(tmp_path):
+    """Attribute-routed actions are real routes; the gap must not double-count them."""
+    (tmp_path / "Orders.cs").write_text(
+        "using Microsoft.AspNetCore.Mvc;\n"
+        "namespace App;\n"
+        "[Route(\"api/[controller]\")]\n"
+        "public class OrdersController : ControllerBase\n"
+        "{\n"
+        "    [HttpGet(\"{id}\")]\n"
+        "    public IActionResult Get(int id) => Ok();\n"
+        "}\n", encoding="utf-8")
+    document = asf.analyse(str(tmp_path))
+    assert document["summary"]["entry_points"] == 1
+    assert document["unenumerable_routes"] == []
+    assert not any("coverage gap" in line for line in document["limitations"])
+
+
+def test_aspnet_signals_without_a_controller_are_still_reported(tmp_path):
+    """``AddControllers()`` and ``[ApiController]`` imply routes this pass cannot see."""
+    (tmp_path / "Startup.cs").write_text(
+        "using Microsoft.AspNetCore.Mvc;\n"
+        "namespace App;\n"
+        "public static class Startup\n"
+        "{\n"
+        "    public static void Configure(IServiceCollection services) =>\n"
+        "        services.AddControllers();\n"
+        "}\n", encoding="utf-8")
+    document = asf.analyse(str(tmp_path))
+    assert document["summary"]["unenumerable_routes"] == 1
+    record = document["unenumerable_routes"][0]
+    assert record["basis"] == "framework_namespace"
+    assert record["line"] == 1
+    assert record["candidate_actions"] == []
+    assert "framework namespace" in " ".join(document["limitations"])
+
+
+def test_a_commented_out_controller_declares_nothing():
+    """The code-only view again: prose about a controller is not a controller."""
+    source = ("// public class OrdersController : Controller\n"
+              "/* class OrdersController : ControllerBase {} */\n"
+              "public class Plain\n{\n}\n")
+    assert asf.discover_unenumerable(source, "csharp") == []
+
+
+def test_unenumerable_records_are_named_without_inventing_paths(surface):
+    """Every record carries a location and a reason, never a made-up URL."""
+    for record in surface["unenumerable_routes"]:
+        assert record["file"] and record["line"] > 0
+        assert record["basis"] in {"controller_base_class", "framework_namespace",
+                                   "api_controller_attribute"}
+        assert record["evidence"]
+        assert "path" not in record
+
+
 def test_analyse_is_read_only_and_deterministic():
     root = os.path.join(FIXTURES, "vulnerable-app")
     before = sorted(os.listdir(root))

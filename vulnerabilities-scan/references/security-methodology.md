@@ -78,6 +78,15 @@ Also enumerate non-HTTP surface: GraphQL resolvers and mutations, WebSocket hand
 implementations, message-queue consumers, scheduled jobs, CLI entry points, and file-watchers. Each
 is a trust boundary even when it never touches HTTP.
 
+**Route-bearing code you cannot enumerate must be reported, not skipped.** Every framework above can
+also route *by convention*, with nothing in the source to match: an ASP.NET `Controller`-derived
+class whose public action methods are reached as `/Order/List`, a Spring `@RestController` with no
+method mapping, a framework whose route table is built at runtime. For those files "no routes found"
+is a coverage gap, not a clean result — record the file, the class and the candidate action names,
+say plainly that the entry points are not enumerated, and never invent the URL an action name
+implies. A zero-route report that does not distinguish "this app has no endpoints" from "this stage
+cannot see this app's endpoints" is worse than no report, because it reads as a pass.
+
 ### 3.2 Trust boundaries
 
 Model three zones and name the crossing points:

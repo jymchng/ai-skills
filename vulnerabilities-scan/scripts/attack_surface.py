@@ -144,6 +144,52 @@ CONTROLLER_PREFIX_RULES: Tuple[Tuple[str, str], ...] = (
     ("jax-rs", r"""@Path\s*\(\s*['"]([^'"]+)['"]"""),
 )
 
+#: Route-bearing code that no rule can enumerate.
+#:
+#: Some frameworks route *by convention*: ``public IActionResult List()`` on a
+#: ``Controller``-derived class is an endpoint with not one character of route
+#: declaration to match, and a project file that never names the web package
+#: leaves stage 2a with nothing to say either. The honest answer for such a file
+#: is not "no endpoints" but "this file carries routes this pass cannot
+#: enumerate", so it is counted separately (``unenumerable_routes``) and stated
+#: as a coverage gap. Each entry is (framework, languages, class-pattern) and the
+#: pattern must prove controller-ness from a base class, never from a name.
+CONTROLLER_STYLE_RULES: Tuple[Tuple[str, Tuple[str, ...], str], ...] = (
+    ("asp.net core", ("csharp",),
+     r"""^[ \t]*(?:(?:public|internal|private|protected|abstract|sealed|static|partial)[ \t]+)*"""
+     r"""class[ \t]+(?P<name>\w+)[ \t]*:[^{;\n]*?\b(?P<base>ControllerBase|Controller)\b"""),
+)
+
+#: Framework markers for a file that uses a web stack without declaring a route
+#: anywhere: the framework's namespace, or an attribute only that framework
+#: defines. Consulted only when neither a route nor a controller base class was
+#: found, so a real route is never relabelled as a gap.
+CONTROLLER_FRAMEWORK_SIGNALS: Tuple[Tuple[str, Tuple[str, ...], str, str], ...] = (
+    ("asp.net core", ("csharp",), r"""^[ \t]*using[ \t]+Microsoft[ \t]*\.[ \t]*AspNetCore\b""",
+     "framework_namespace"),
+    ("asp.net core", ("csharp",), r"""\[[ \t]*ApiController[ \t]*\]""",
+     "api_controller_attribute"),
+)
+
+#: Framework identifiers are lower case like every other ``framework`` field;
+#: prose gets a display name instead, because "asp.net core" reads as a typo.
+FRAMEWORK_DISPLAY_NAMES = {"asp.net core": "ASP.NET Core"}
+
+#: How to name a convention-routed controller's action methods, per language. A
+#: candidate is a public method with a return type. Whether the framework would
+#: route it is a convention question this pass does not settle, so the names are
+#: reported as candidates and never as endpoints: inventing ``/Orders/List``
+#: from an action name is the same mistake as inventing a vulnerability from a
+#: heuristic.
+CONTROLLER_ACTION_PATTERNS: Dict[str, str] = {
+    "csharp": (r"""^[ \t]*public[ \t]+(?:async[ \t]+)?(?:virtual[ \t]+|override[ \t]+|"""
+               r"""sealed[ \t]+)*(?:static[ \t]+)?[A-Za-z_][\w.]*(?:<[^()]*>)?(?:\[\])?"""
+               r"""[ \t]+(?P<name>[A-Za-z_]\w*)[ \t]*\("""),
+}
+
+#: A limitation sentence names a few actions, not forty.
+ACTION_SAMPLE_LIMIT = 12
+
 #: Method names in the regex are framework-specific; normalise to HTTP verbs.
 METHOD_MAP = {
     "get": "GET", "post": "POST", "put": "PUT", "patch": "PATCH", "delete": "DELETE",
@@ -584,6 +630,113 @@ def discover_validators(text: str) -> Dict[str, List[int]]:
     return counts
 
 
+def _action_candidates(code: str, language: str) -> List[str]:
+    """Public method names in a convention-routed controller, in source order."""
+    pattern = CONTROLLER_ACTION_PATTERNS.get(language)
+    if not pattern:
+        return []
+    try:
+        compiled = re.compile(pattern, re.MULTILINE)
+    except re.error:                        # a bad rule must not kill the pass
+        return []
+    return list(dict.fromkeys(match.group("name") for match in compiled.finditer(code)))
+
+
+def discover_unenumerable(text: str, language: str) -> List[Dict[str, Any]]:
+    """Route-bearing code whose routes no rule can enumerate.
+
+    Two kinds of evidence, strongest first: a class that derives from the
+    framework's controller base class -- a route surface even when the file
+    declares no route at all -- and a framework namespace or attribute in a file
+    where nothing route-shaped matched. The record says *where* the code is and
+    *why* it is route-bearing; it never says which URL it serves, because that
+    is a convention this pass cannot verify. Runs on the code-only view, so a
+    comment that mentions ``Controller`` proves nothing.
+    """
+    code = mask_non_code(text, language)
+    found: List[Dict[str, Any]] = []
+    actions: List[str] = []
+    for framework, languages, pattern in CONTROLLER_STYLE_RULES:
+        if language not in languages:
+            continue
+        try:
+            compiled = re.compile(pattern, re.MULTILINE)
+        except re.error:
+            continue
+        for match in compiled.finditer(code):
+            if not actions:
+                actions = _action_candidates(code, language)
+            found.append({
+                "framework": framework,
+                "basis": "controller_base_class",
+                "class": match.group("name"),
+                "base": match.group("base"),
+                "line": _line_of(text, match.start()),
+                "evidence": _evidence_line(text, match.start()),
+                "candidate_actions": actions[:ACTION_SAMPLE_LIMIT],
+                "candidate_action_count": len(actions),
+            })
+    if found:
+        return found
+    for framework, languages, pattern, basis in CONTROLLER_FRAMEWORK_SIGNALS:
+        if language not in languages:
+            continue
+        try:
+            compiled = re.compile(pattern, re.MULTILINE)
+        except re.error:
+            continue
+        match = compiled.search(code)
+        if match:
+            found.append({
+                "framework": framework,
+                "basis": basis,
+                "class": None,
+                "base": None,
+                "line": _line_of(text, match.start()),
+                "evidence": _evidence_line(text, match.start()),
+                "candidate_actions": [],
+                "candidate_action_count": 0,
+            })
+            break
+    return found
+
+
+def _describe_unenumerable(record: Dict[str, Any]) -> str:
+    """One ``file:line`` plus why it is route-bearing, for a limitation sentence."""
+    where = "%s:%s" % (record.get("file"), record.get("line"))
+    if record.get("basis") != "controller_base_class":
+        return "%s (%s)" % (where, str(record.get("basis") or "framework present")
+                            .replace("_", " "))
+    name = record.get("class") or "controller"
+    names = list(record.get("candidate_actions") or [])
+    count = record.get("candidate_action_count") or len(names)
+    if not count:
+        return "%s %s (no action method visible)" % (where, name)
+    shown = ", ".join(names)
+    if count > len(names):
+        shown += ", \u2026"
+    return "%s %s (%d action method(s): %s)" % (where, name, count, shown)
+
+
+def _unenumerable_limitations(records: Sequence[Dict[str, Any]]) -> List[str]:
+    """One limitation per framework, naming up to eight files and the rest by count."""
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for record in records:
+        grouped.setdefault(str(record.get("framework") or "unknown"), []).append(record)
+    lines: List[str] = []
+    for framework, items in sorted(grouped.items()):
+        described = "; ".join(_describe_unenumerable(record) for record in items[:8])
+        remainder = "" if len(items) <= 8 else "; and %d more" % (len(items) - 8)
+        display = FRAMEWORK_DISPLAY_NAMES.get(framework, framework)
+        lines.append(
+            "%d file(s) carry %s route-bearing code that no route-discovery rule can "
+            "enumerate, because the framework routes it by convention: %s%s. Their entry "
+            "points are not listed, so a zero-route result for those files is a coverage "
+            "gap, not evidence that they expose no endpoint"
+            % (len(items), display, described, remainder))
+    return lines
+
+
 def _controller_prefix(text: str, framework: str, line: int) -> str:
     """Find the class-level prefix that applies to a route on ``line``."""
     for rule_framework, pattern in CONTROLLER_PREFIX_RULES:
@@ -632,6 +785,7 @@ def analyse(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
     entry_points: List[Dict[str, Any]] = []
     mechanisms: List[Dict[str, Any]] = []
     non_http: List[Dict[str, Any]] = []
+    unenumerable: List[Dict[str, Any]] = []
     trust_sources: Dict[str, int] = {}
     validators: Dict[str, int] = {}
     languages_seen: Dict[str, int] = {}
@@ -711,6 +865,14 @@ def analyse(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
                         route["framework"] = name
                         break
 
+        # A file with no route is not the same as a file with no endpoints. When
+        # the code is route-bearing by construction -- a controller class the
+        # framework routes by convention -- that distinction is the difference
+        # between "clean" and "not looked at", so it is counted and stated.
+        if not routes:
+            for record in discover_unenumerable(text, language):
+                unenumerable.append({"file": rel, "language": language, **record})
+
         auth = discover_auth(text, language)
         mechanisms.extend({"file": rel, **item} for item in auth)
 
@@ -786,6 +948,7 @@ def analyse(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
         item["id"] = f"EP-{index:03d}"
     mechanisms.sort(key=lambda item: (item["file"], item["line"], item["mechanism"]))
     non_http.sort(key=lambda item: (item["kind"], item["file"], item["line"]))
+    unenumerable.sort(key=lambda item: (item["framework"], item["file"], item["line"]))
 
     unauthenticated = [item for item in entry_points
                        if item["auth"]["assessment"] == "no_mechanism_detected"]
@@ -808,6 +971,7 @@ def analyse(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
             f"{len(unauthenticated)} entry point(s) have no visible authentication mechanism. "
             f"Absence of a detected mechanism is not proof of missing authentication: verify "
             f"before reporting (references/false-positive-handling.md)")
+    limitations.extend(_unenumerable_limitations(unenumerable))
     if technologies is not None:
         modelled = {framework for framework, *_ in ROUTE_RULES}
         # Only real web frameworks matter here; libraries such as boto3 are not
@@ -836,6 +1000,7 @@ def analyse(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
             "without_visible_auth": len(unauthenticated),
             "auth_mechanisms": len(mechanisms),
             "non_http_surfaces": len(non_http),
+            "unenumerable_routes": len(unenumerable),
             "by_framework": dict(sorted(by_framework.items())),
             "by_method": dict(sorted(by_method.items())),
             "non_http_by_kind": dict(sorted(non_http_counts.items())),
@@ -847,6 +1012,7 @@ def analyse(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
             "files_with_mechanisms": sorted({item["file"] for item in mechanisms}),
         },
         "non_http": non_http,
+        "unenumerable_routes": unenumerable,
         "trust_boundaries": {
             "untrusted_sources": dict(sorted(trust_sources.items())),
             "input_occurrences": sum(trust_sources.values()),
