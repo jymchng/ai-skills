@@ -55,6 +55,29 @@ Ordering inside a section is deterministic: severity desc, then priority, then f
 
 The **Verdict** and **Coverage** sections form a single claim; never render one without the other.
 
+### Machine-readable deliverables
+
+The rendered report is for a reader. The JSON artefacts carry the same dataset for a machine, and all of
+them are written on every run:
+
+| Artefact | Contents |
+| - | - |
+| `SECURITY-AUDIT-REPORT.json` | The whole report: counts, verdict, coverage, methodology, and one ticket object per validated finding |
+| `findings.json` | The validated dataset — the authority every other artefact is derived from |
+| `findings-index.json` | The register of **every** finding: id, file, line, category, severity, confidence, priority, validation status, whether it is ticketable and why not, and the path plus SHA-256 of that finding's own file |
+| `tickets/VULN-NNN.json` | Exactly one file per finding — validated, needs-investigation and suppressed alike |
+
+Two rules make the set trustworthy:
+
+1. **One file per finding.** No finding may be reachable only by parsing the aggregate report.
+   Actionability is carried *inside* the file: `ticketable` is true only for a validated finding, and
+   `ticketable_reason` says why the others are not, so an issue tracker never receives an unvalidated
+   pattern match.
+2. **The index is checked, not trusted.** `validate_reports.py` proves each entry points at a file that
+   exists, parses, names the same finding and still matches the recorded digest — a stale ticket from an
+   earlier run must not pass as a delivered finding.
+
+
 ## 3. Markdown rules
 
 * Plain CommonMark; pipe tables only, no raw HTML.

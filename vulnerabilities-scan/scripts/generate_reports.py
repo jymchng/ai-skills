@@ -99,6 +99,11 @@ def generate_all(model: Mapping[str, Any], outdir: str,
                                       "ticket_dir")}
                     for name, result in results.items()},
         "tickets": tickets,
+        # The per-finding register: one entry per finding, pointing at the JSON
+        # file written for it. ``tickets`` above is the same set with digests;
+        # this record makes the index a first-class deliverable of the run.
+        "findings_index": results.get("json", {}).get("index") or {},
+        "ticket_dir": results.get("json", {}).get("ticket_dir"),
         "failed": sorted(name for name, result in results.items()
                          if result.get("status") == "failed"),
         "unavailable": sorted(name for name, result in results.items()

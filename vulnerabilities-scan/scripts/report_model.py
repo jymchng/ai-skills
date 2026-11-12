@@ -1002,6 +1002,7 @@ OUTPUT_NAMES = {
     "pdf": "SECURITY-AUDIT-REPORT.pdf",
     "json": "SECURITY-AUDIT-REPORT.json",
     "manifest": "report-manifest.json",
+    "index": "findings-index.json",
     "tickets": "tickets",
     "dataset": "findings.json",
     "metadata": "audit-metadata.json",

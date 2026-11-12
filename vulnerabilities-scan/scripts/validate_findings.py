@@ -395,12 +395,20 @@ def read_snapshot_lines(root: str, rel: str) -> Tuple[List[str], Optional[str]]:
 
 
 def capture_evidence(lines: Sequence[str], location: Dict[str, Any],
-                     secrets: Sequence[str] = ()) -> Tuple[str, Optional[str]]:
+                     secrets: Sequence[str] = (),
+                     counter: Optional[List[int]] = None
+                     ) -> Tuple[str, Optional[str]]:
     """Quote the reported lines from the snapshot. Returns (evidence, problem).
 
     The scanner's own message is never used as evidence. If the reported line
     does not exist in this snapshot, the function says so instead of quoting a
     neighbouring line as though it were the finding.
+
+    When *counter* is given, the number of redactions applied to the quoted
+    window is appended to it. The window is re-read from the audited file, so
+    this is the only place that knows how many credentials the re-quote had to
+    remove; without it the run reported "0 redactions applied" while every
+    secret-bearing evidence block had in fact been redacted.
     """
     try:
         start = int(location.get("line_start") or 0)
@@ -426,7 +434,9 @@ def capture_evidence(lines: Sequence[str], location: Dict[str, Any],
         if len(quoted) >= MAX_EVIDENCE_LINES:
             break
     evidence = "\n".join(quoted)[:MAX_EVIDENCE_CHARS]
-    redacted, _ = redact_text(evidence, secrets)
+    redacted, count = redact_text(evidence, secrets)
+    if counter is not None:
+        counter.append(count)
     return redacted, None
 
 
@@ -925,7 +935,9 @@ def validate_dataset(root: str, dataset: Dict[str, Any], *, secrets: Sequence[st
 
         steps: List[str] = []
         # Step 1-2: locate and read context.
-        evidence, evidence_problem = capture_evidence(lines, location, secrets)
+        evidence_counter: List[int] = []
+        evidence, evidence_problem = capture_evidence(lines, location, secrets,
+                                                      evidence_counter)
         if evidence_problem and file_problem and "no readable content" in evidence_problem:
             # The file-level reason is more specific and more useful to a reader
             # than the fact that an empty list produced no excerpt.
@@ -1029,6 +1041,7 @@ def validate_dataset(root: str, dataset: Dict[str, Any], *, secrets: Sequence[st
         steps.append("severity %s from %s" % (finding.get("severity"),
                                               "CVSS %s" % score if score is not None else "unscored"))
         finding["validation"] = "; ".join(steps) + "."
+        redactions += sum(evidence_counter)
         redactions += redact_finding(finding, secrets)
 
         transcript.append({

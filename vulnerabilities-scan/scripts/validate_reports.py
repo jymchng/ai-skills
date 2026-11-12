@@ -83,22 +83,30 @@ _EXTERNAL_REF_RE = (
 #: Credential shapes that must never reach a rendered report. This mirrors the
 #: detector in ``builtin_analyzers.SECRET_PATTERNS`` on purpose: the verifier is
 #: meant to catch a *redaction* failure, so it must look for the same values.
+#:
+#: Each pattern names the credential-bearing part ``secret`` so the scan can tell
+#: a live value from a redaction marker. A redacted connection string keeps its
+#: shape (``postgres://app:[REDACTED]@host/db``) and a redacted assignment keeps
+#: its key, so matching the shape alone declared every correctly redacted report
+#: a leak and made the delivery gate impossible to pass.
 SECRET_SHAPES: Tuple[Tuple[str, re.Pattern], ...] = (
-    ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("private-key-block", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")),
-    ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
-    ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
-    ("stripe-key", re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b")),
-    ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("aws-access-key", re.compile(r"\b(?P<secret>(?:AKIA|ASIA)[0-9A-Z]{16})\b")),
+    ("private-key-block",
+     re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+                r"(?P<secret>.*?)-----END", re.DOTALL)),
+    ("github-token", re.compile(r"\b(?P<secret>gh[pousr]_[A-Za-z0-9]{20,})\b")),
+    ("slack-token", re.compile(r"\b(?P<secret>xox[baprs]-[A-Za-z0-9-]{10,})\b")),
+    ("stripe-key", re.compile(r"\b(?P<secret>(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,})\b")),
+    ("google-api-key", re.compile(r"\b(?P<secret>AIza[0-9A-Za-z_\-]{35})\b")),
     ("jwt-token",
-     re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,}\b")),
+     re.compile(r"\b(?P<secret>eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,})\b")),
     ("connection-string",
      re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql)://"
-                r"[^\s:/@]+:[^\s@/]{3,}@")),
+                r"[^\s:/@]+:(?P<secret>[^\s@/]{3,})@")),
     ("credential-assignment",
      re.compile(r"(?i)\b(?:password|passwd|pwd|secret|api[_-]?key|apikey|access[_-]?token|"
                 r"auth[_-]?token|client[_-]?secret|private[_-]?key)\b\s*[:=]\s*"
-                r"[\"'][^\"'\n]{6,120}[\"']")),
+                r"[\"'](?P<secret>[^\"'\n]{6,120})[\"']")),
 )
 
 _VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
@@ -207,6 +215,62 @@ def _json_report_ids(path: str) -> List[str]:
             if isinstance(ticket, dict) and ticket.get("finding_id")]
 
 
+def _json_report_article_ids(path: str) -> List[str]:
+    """Every id the HTML renders as an article: findings plus needs-investigation.
+
+    Used when no ``--dataset`` was given, so the article count still has an
+    authority to compare against instead of silently passing.
+    """
+    if not os.path.exists(path):
+        return []
+    try:
+        document = json.loads(_read_text(path))
+    except json.JSONDecodeError:
+        return []
+    ids: List[str] = []
+    for key in ("findings", "needs_investigation"):
+        section = document.get(key)
+        if not isinstance(section, list):
+            continue
+        ids.extend(str(ticket.get("finding_id")) for ticket in section
+                   if isinstance(ticket, dict) and ticket.get("finding_id"))
+    return ids
+
+
+def _check_finding_file(entry: Mapping[str, Any], directory: str,
+                        problems: List[str]) -> None:
+    """Prove one index entry really points at that finding's own JSON file.
+
+    The register is only useful if the file it names exists, is readable, is
+    about the same finding and still has the digest the index recorded. A stale
+    ticket from an earlier run would otherwise look like a delivered finding.
+    """
+    finding_id = entry.get("id")
+    promised = entry.get("ticket") or {}
+    path = promised.get("path")
+    if not path:
+        problems.append("findings index entry %s has no ticket path" % finding_id)
+        return
+    candidates = [str(path), os.path.join(directory, os.path.basename(str(path)))]
+    resolved = next((candidate for candidate in candidates if os.path.exists(candidate)), None)
+    if resolved is None:
+        problems.append("findings index entry %s points at a missing file: %s"
+                        % (finding_id, path))
+        return
+    try:
+        document = json.loads(_read_text(resolved))
+    except json.JSONDecodeError as exc:
+        problems.append("%s is not valid JSON: %s" % (os.path.basename(resolved), exc))
+        return
+    if str(document.get("finding_id")) != str(finding_id):
+        problems.append("%s describes %s but the index says %s"
+                        % (os.path.basename(resolved), document.get("finding_id"), finding_id))
+    claimed = promised.get("sha256")
+    if claimed and _digest(resolved) != claimed:
+        problems.append("%s does not match the digest recorded in the index"
+                        % os.path.basename(resolved))
+
+
 def _severity_rows_markdown(text: str) -> Dict[str, int]:
     """Read the summary table rows out of the Markdown report."""
     rows: Dict[str, int] = {}
@@ -227,13 +291,23 @@ def _total_markdown(text: str) -> Optional[int]:
 
 def _scan_secret_shapes(name: str, text: str, problems: List[str],
                         warnings: List[str]) -> None:
+    """Flag a rendered credential shape unless every match is a redaction marker.
+
+    A redacted value keeps the shape it was redacted out of, so the marker has to
+    be recognised or the gate can never pass on a report that did the right
+    thing. ``finding_model.is_placeholder`` is the one definition of "this is a
+    marker, not a secret"; stage 5's leak guard uses the same test.
+    """
     for label, pattern in SECRET_SHAPES:
-        match = pattern.search(text)
-        if match:
+        for match in pattern.finditer(text):
+            value = match.groupdict().get("secret") or match.group(0)
+            if fm.is_placeholder(value):
+                continue
             # The value itself is never echoed: that would put the secret in the
             # verifier's own output, and from there into a CI log.
             problems.append("%s: unredacted %s near offset %d"
                             % (name, label, match.start()))
+            break
 
 
 def _scan_exact_values(name: str, text: str, secrets: Sequence[str],
@@ -278,10 +352,23 @@ def validate(outdir: str, dataset: Optional[str] = None,
     checked: Dict[str, Any] = {}
 
     expected_ids: List[str] = []
+    #: Ids the HTML renders as <article class="finding">: the reportable findings
+    #: *and* the "needs investigation" section, which the template renders with
+    #: the same element. Counting only the first section reported every report set
+    #: with a single needs-review finding as inconsistent.
+    expected_article_ids: List[str] = []
+    #: Every finding the run delivered, in report order: validated, then
+    #: needs-investigation, then suppressed. Each must have one JSON file of its
+    #: own, so this is deliberately not the same list as ``expected_ids``.
+    all_finding_ids: List[str] = []
     model: Dict[str, Any] = {}
     if dataset:
         model = rm.build_report(fm.load_findings(dataset))
         expected_ids = [entry["id"] for entry in model.get("findings") or []]
+        expected_article_ids = expected_ids + [entry["id"] for entry
+                                              in model.get("needs_investigation") or []]
+        all_finding_ids = expected_article_ids + [entry["id"] for entry
+                                                 in model.get("suppressed") or []]
         checked["dataset"] = {"path": dataset, "sha256": _digest(dataset),
                               "ids": expected_ids,
                               "by_severity": (model.get("counts") or {}).get("by_severity"),
@@ -370,9 +457,16 @@ def validate(outdir: str, dataset: Optional[str] = None,
             if match:
                 problems.append("the HTML report references an external resource (%r): it "
                                 "must be self-contained" % match.group(0)[:40])
-        if audit.articles != len(expected_ids):
+        article_ids = expected_article_ids or _json_report_article_ids(
+            os.path.join(outdir, rm.OUTPUT_NAMES["json"]))
+        if article_ids and audit.articles != len(article_ids):
             problems.append("the HTML report has %d finding articles, expected %d"
-                            % (audit.articles, len(expected_ids)))
+                            % (audit.articles, len(article_ids)))
+        missing_articles = [finding_id for finding_id in article_ids
+                            if finding_id not in html_text]
+        if missing_articles:
+            problems.append("the HTML report does not render %s"
+                            % ", ".join(missing_articles))
         missing = [finding_id for finding_id in expected_ids
                    if finding_id not in html_text]
         if missing:
@@ -385,6 +479,10 @@ def validate(outdir: str, dataset: Optional[str] = None,
     json_path = os.path.join(outdir, rm.OUTPUT_NAMES["json"])
     json_doc: Dict[str, Any] = {}
     json_text = ""
+    if not all_finding_ids:  # no --dataset: fall back to what the manifest records
+        all_finding_ids = list(manifest.get("ids") or []) + list(
+            manifest.get("needs_investigation_ids") or []) + list(
+            manifest.get("suppressed_ids") or [])
     if not os.path.exists(json_path):
         problems.append("missing %s" % rm.OUTPUT_NAMES["json"])
     else:
@@ -420,14 +518,47 @@ def validate(outdir: str, dataset: Optional[str] = None,
             if os.path.isdir(directory):
                 on_disk = sorted(name for name in os.listdir(directory)
                                  if name.endswith(".json"))
-                if expected_ids and len(on_disk) != len(expected_ids):
-                    problems.append("tickets/ holds %d files, expected %d"
-                                    % (len(on_disk), len(expected_ids)))
+                if all_finding_ids and len(on_disk) != len(all_finding_ids):
+                    problems.append("tickets/ holds %d files, expected one per finding (%d)"
+                                    % (len(on_disk), len(all_finding_ids)))
                 for name in on_disk:
                     try:
                         json.loads(_read_text(os.path.join(directory, name)))
                     except json.JSONDecodeError as exc:
                         problems.append("tickets/%s is not valid JSON: %s" % (name, exc))
+
+                # ---- per-finding register ---------------------------------- #
+                index_path = os.path.join(outdir, rm.OUTPUT_NAMES["index"])
+                if not os.path.exists(index_path):
+                    problems.append("missing %s: the per-finding register was not written"
+                                    % rm.OUTPUT_NAMES["index"])
+                else:
+                    try:
+                        index = json.loads(_read_text(index_path))
+                    except json.JSONDecodeError as exc:
+                        index = {}
+                        problems.append("%s is not valid JSON: %s"
+                                        % (rm.OUTPUT_NAMES["index"], exc))
+                    if index:
+                        if index.get("kind") != "security-audit-findings-index":
+                            problems.append("%s has kind %r, expected "
+                                            "'security-audit-findings-index'"
+                                            % (rm.OUTPUT_NAMES["index"], index.get("kind")))
+                        entries = [entry for entry in index.get("findings") or []
+                                   if isinstance(entry, dict)]
+                        index_ids = [str(entry.get("id")) for entry in entries]
+                        if all_finding_ids and index_ids != all_finding_ids:
+                            problems.append("%s lists %d finding(s), the dataset has %d"
+                                            % (rm.OUTPUT_NAMES["index"], len(index_ids),
+                                               len(all_finding_ids)))
+                        if len(set(index_ids)) != len(index_ids):
+                            problems.append("%s repeats a finding id" % rm.OUTPUT_NAMES["index"])
+                        for entry in entries:
+                            _check_finding_file(entry, directory, problems)
+                        checked["findings_index"] = {
+                            "path": index_path, "sha256": _digest(index_path),
+                            "findings": len(entries),
+                            "totals": index.get("totals")}
             else:
                 warnings.append("no tickets/ directory: per-finding JSON files were not written")
 

@@ -32,11 +32,14 @@ fields:
 ``description``   Markdown with impact, attack scenario, evidence, remediation
 ``acceptance_criteria``  what has to be true before the ticket may be closed
 
-Only **validated** findings become tickets. ``needs_investigation`` and
-``suppressed`` findings appear in the aggregate document but never in
-``tickets/``, because filing an unvalidated pattern match as a defect is exactly
-the false-positive behaviour this skill exists to avoid. Each ticket therefore
-also carries ``ticketable: true`` and a ``ticketable_reason``.
+Every finding in the dataset gets exactly one JSON file in ``tickets/`` \u2014
+validated, needs-investigation and suppressed alike \u2014 so no finding is
+reachable only by parsing the aggregate report. Actionability is carried
+*inside* the file: ``ticketable`` is true only for a validated finding, and
+``ticketable_reason`` says why the others are not, because filing an unvalidated
+pattern match as a defect is exactly the false-positive behaviour this skill
+exists to avoid. ``findings-index.json`` is the metadata document over the whole
+set: one entry per finding with its path, digest and status, plus the totals.
 
 The fingerprint exists for idempotency: a downstream agent can create the issue
 with the fingerprint as a label and skip tickets whose fingerprint it has seen,
@@ -296,6 +299,62 @@ def ticket_filename(finding_id: Any) -> str:
     return "%s.json" % (safe or "unassigned")
 
 
+def build_index(model: Mapping[str, Any], document: Mapping[str, Any],
+                ticket_dir: str, tickets: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Metadata for every finding, with a pointer to that finding's own JSON.
+
+    The aggregate report is prose-shaped: it is built for a reader. This document
+    is the machine-readable register of the same set, so a consumer can enumerate
+    findings and fetch one file each without parsing the report.
+    """
+    by_id = {str(ticket.get("finding_id")): ticket for ticket in tickets}
+    entries: List[Dict[str, Any]] = []
+    for section, status in (("findings", "validated"),
+                            ("needs_investigation", "needs_review"),
+                            ("suppressed", "suppressed")):
+        for entry in rm._as_list(document.get(section)):  # noqa: SLF001
+            if not isinstance(entry, dict):
+                continue
+            ticket = by_id.get(str(entry.get("finding_id")), {})
+            entries.append({
+                "id": entry.get("finding_id"),
+                "kind": entry.get("kind"),
+                "file": (entry.get("finding") or {}).get("location", {}).get("file"),
+                "line_start": (entry.get("finding") or {}).get("location", {}).get("line_start"),
+                "line_end": (entry.get("finding") or {}).get("location", {}).get("line_end"),
+                "category": (entry.get("finding") or {}).get("category"),
+                "title": (entry.get("finding") or {}).get("title"),
+                "severity": (entry.get("finding") or {}).get("severity"),
+                "confidence": (entry.get("finding") or {}).get("confidence"),
+                "priority": (entry.get("finding") or {}).get("priority"),
+                "validation_status": status,
+                "ticketable": entry.get("ticketable"),
+                "ticketable_reason": entry.get("ticketable_reason"),
+                "ticket": {"path": ticket.get("path"), "sha256": ticket.get("sha256"),
+                           "bytes": ticket.get("bytes"),
+                           "fingerprint": ticket.get("fingerprint")},
+            })
+    return {
+        "schema_version": "1.0",
+        "kind": "security-audit-findings-index",
+        "generator": {"name": (model.get("tool") or {}).get("name"),
+                      "version": (model.get("tool") or {}).get("version"),
+                      "generated_at": model.get("generated_at")},
+        "meta": model.get("meta"),
+        "counts": model.get("counts"),
+        "ticket_dir": ticket_dir,
+        "totals": {"findings": len(entries),
+                   "ticketable": sum(1 for entry in entries if entry["ticketable"]),
+                   "validated": sum(1 for entry in entries
+                                    if entry["validation_status"] == "validated"),
+                   "needs_investigation": sum(1 for entry in entries
+                                              if entry["validation_status"] == "needs_review"),
+                   "suppressed": sum(1 for entry in entries
+                                     if entry["validation_status"] == "suppressed")},
+        "findings": entries,
+    }
+
+
 def generate(model: Mapping[str, Any], outdir: str, out: Optional[str] = None,
              ticket_dir: Optional[str] = None,
              write_tickets: bool = True) -> Dict[str, Any]:
@@ -308,9 +367,16 @@ def generate(model: Mapping[str, Any], outdir: str, out: Optional[str] = None,
 
     directory = ticket_dir or os.path.join(outdir, TICKET_DIRNAME)
     tickets: List[Dict[str, Any]] = []
+    index_record: Dict[str, Any] = {}
     if write_tickets:
         rm.ensure_outdir(directory)
-        for entry in document["findings"]:
+        # One file per finding, not one per *validated* finding: a finding the
+        # report shows as "needs investigation" is still a finding with its own
+        # evidence, and a reviewer must be able to open it. Actionability is
+        # carried by ``ticketable`` inside the file, so the set of files and the
+        # set of findings stay the same size.
+        for entry in (document["findings"] + document["needs_investigation"]
+                      + document["suppressed"]):
             path = os.path.join(directory, ticket_filename(entry["finding_id"]))
             record = rm.write_report(path, json.dumps(entry, indent=2, ensure_ascii=False) + "\n")
             tickets.append({"finding_id": entry["finding_id"], "path": path,
@@ -318,9 +384,14 @@ def generate(model: Mapping[str, Any], outdir: str, out: Optional[str] = None,
                             "fingerprint": entry["fingerprint"],
                             "jira_summary": entry["jira"]["summary"],
                             "jira_priority": entry["jira"]["priority"]["name"]})
+        index = build_index(model, document, directory, tickets)
+        index_record = rm.write_report(
+            os.path.join(outdir, rm.OUTPUT_NAMES["index"]),
+            json.dumps(index, indent=2, ensure_ascii=False) + "\n")
     result.update({"document": target, "ticket_dir": directory if write_tickets else None,
                    "tickets": tickets, "needs_investigation": len(document["needs_investigation"]),
-                   "suppressed": len(document["suppressed"])})
+                   "suppressed": len(document["suppressed"]),
+                   "index": index_record})
     return result
 
 
