@@ -1659,9 +1659,12 @@ def _match_line(text: str, starts: Sequence[int], match: Any) -> int:
 def _shape_replacement(match: Any, marker: str = "SECRET") -> str:
     """Replace one captured credential with the marker for its shape.
 
-    The analyzer's patterns either name the value (``?P<secret>``) or match the
-    value as a whole, so ``password = "…"`` keeps its assignment and loses only
-    the literal. Placeholders and markers are left alone.
+    The replacement itself lives in :func:`finding_model.redact_shape_match`, so
+    the analyzer, the validator and the orchestrator spell a marker the same way;
+    *marker* is the shape's word from :data:`SECRET_PATTERNS`. A pattern either
+    names the value (``?P<secret>``) or matches it whole, so an assignment keeps
+    its name and loses only the literal, and a URL keeps its scheme, user and
+    host. Placeholders and existing markers are left alone.
     """
     return fm.redact_shape_match(match, marker)
 
