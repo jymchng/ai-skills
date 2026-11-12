@@ -652,6 +652,12 @@ def discover_unenumerable(text: str, language: str) -> List[Dict[str, Any]]:
     *why* it is route-bearing; it never says which URL it serves, because that
     is a convention this pass cannot verify. Runs on the code-only view, so a
     comment that mentions ``Controller`` proves nothing.
+
+    This is a *detector*, not a verdict: an attribute-routed controller matches
+    here as well, because a controller class is one either way. ``analyse`` only
+    reports a record for a file that produced no route, which is what makes the
+    record a coverage gap rather than a second, vaguer description of a route
+    this pass already found -- keep that gate at the call site.
     """
     code = mask_non_code(text, language)
     found: List[Dict[str, Any]] = []
