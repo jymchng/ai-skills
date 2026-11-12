@@ -195,6 +195,75 @@ def _source_key(source: Dict[str, Any]) -> Tuple[str, str]:
     return (str(source.get("tool")), str(source.get("rule_id")))
 
 
+def _provenance_from_flat_fields(finding: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Recover ``sources`` from the flat finding-model fields.
+
+    Stage 3 writes ``sources``; a finding that arrives from anywhere else — a
+    hand-written record, a tool importer, a report that was edited — may carry
+    its provenance as ``detection={scanner, rule_id}`` and/or
+    ``provenance=[{tool, rule_id}]`` instead. Dropping those silently would
+    defeat the point of consolidation (the merge would claim one engine looked
+    at the issue when three did), so they are folded into ``sources``.
+    """
+    out: List[Dict[str, Any]] = []
+    seen = set()
+
+    def add(tool: Any, rule_id: Any, raw_ref: Any = None) -> None:
+        if not tool:
+            return
+        key = (str(tool), str(rule_id))
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({"tool": str(tool), "rule_id": rule_id, "raw_ref": raw_ref})
+
+    detection = finding.get("detection")
+    if isinstance(detection, dict):
+        add(detection.get("scanner") or detection.get("tool"), detection.get("rule_id"))
+    for source in finding.get("provenance") or []:
+        if isinstance(source, dict):
+            add(source.get("tool"), source.get("rule_id"), source.get("raw_ref"))
+    return out
+
+
+def _fill_from_flat_fields(findings: Sequence[Dict[str, Any]]) -> int:
+    """Fill ``location`` and ``sources`` from the flat model when they are absent.
+
+    Only gaps are filled, and nothing is invented: a finding with no location and
+    no ``file`` keeps no location (it simply cannot be merged by site), and a
+    finding with no provenance of any kind keeps an empty ``sources`` list.
+    Returns ``(filled, no_provenance)`` so the caller can report both numbers
+    rather than hide them.
+    """
+    filled = 0
+    no_provenance = 0
+    for finding in findings:
+        changed = False
+        location = finding.get("location")
+        if not isinstance(location, dict) or not location.get("file"):
+            flat_file = finding.get("file")
+            if flat_file:
+                start = finding.get("line_start")
+                finding["location"] = {"file": str(flat_file), "line_start": start,
+                                       "line_end": finding.get("line_end", start)}
+                changed = True
+        if not _sources(finding):
+            recovered = _provenance_from_flat_fields(finding)
+            if recovered:
+                finding["sources"] = recovered
+                changed = True
+            else:
+                # Left absent on purpose: "no engine recorded" is not the same
+                # claim as "no engine looked", and an empty list in the output
+                # would be read as the latter. The count is reported below and
+                # finding.schema.json (which requires ``sources``) flags the
+                # record, so the gap surfaces instead of being smoothed over.
+                no_provenance += 1
+        if changed:
+            filled += 1
+    return filled, no_provenance
+
+
 # --------------------------------------------------------------------------- #
 # Merging
 # --------------------------------------------------------------------------- #
@@ -212,8 +281,14 @@ def _merge_into(keep: Dict[str, Any], other: Dict[str, Any], reason: str) -> Non
     tools = {str(s["tool"]) for s in keep["sources"]}
     keep["corroborating_tools"] = sorted(tools)
     if len(tools) > 1:
-        keep.setdefault("priority_factors", []).append(
-            "corroborated by %d independent engines: %s" % (len(tools), ", ".join(sorted(tools))))
+        # One note, not one per merge: a three-way merge folded pairwise would
+        # otherwise leave "corroborated by 2 …" and "corroborated by 3 …" in the
+        # same list, reading as two separate corroboration claims.
+        factors = [f for f in (keep.get("priority_factors") or [])
+                   if not str(f).startswith("corroborated by ")]
+        factors.append("corroborated by %d independent engines: %s"
+                       % (len(tools), ", ".join(sorted(tools))))
+        keep["priority_factors"] = factors
 
     # Additional sites: everything the folded finding pointed at, plus its own
     # aliases, minus the primary location.
@@ -340,6 +415,7 @@ def deduplicate(dataset: Dict[str, Any], *, line_window: int = DEFAULT_LINE_WIND
     findings = [f for f in (dataset.get("findings") or []) if isinstance(f, dict)]
     incoming = len(findings)
     merges: List[Dict[str, Any]] = []
+    filled, no_provenance = _fill_from_flat_fields(findings)
 
     def record(keep: Dict[str, Any], members: Sequence[Dict[str, Any]], reason: str) -> None:
         merges.append({
@@ -404,6 +480,8 @@ def deduplicate(dataset: Dict[str, Any], *, line_window: int = DEFAULT_LINE_WIND
         "line_window": line_window,
         "cross_file": bool(cross_file),
         "min_fingerprint": min_fingerprint,
+        "filled_from_flat_fields": filled,
+        "findings_without_provenance": no_provenance,
         "merges": merges,
     }
     dataset["summary"] = {

@@ -234,3 +234,79 @@ def test_cli_writes_a_dataset(tmp_path, capsys):
 def test_missing_input_is_a_clean_failure(tmp_path):
     with pytest.raises(SystemExit):
         dd.load_documents([str(tmp_path / "nope.json")])
+
+
+# --------------------------------------------------------------------------- #
+# Input shapes other than stage 3's
+# --------------------------------------------------------------------------- #
+# The pipeline's own contract is a `location` dict and a `sources` list. Records
+# that reach consolidation from anywhere else (a tool importer, a hand-written
+# finding, an edited report) carry the flat model instead: `file`/`line_start`
+# and `detection`/`provenance`. Those must not merge as if they had no
+# provenance at all.
+
+def flat(file="app/orders.py", line=10, tool=None, rule=None, provenance=None, **extra):
+    record = finding(**extra)
+    record.pop("location")
+    record.pop("sources")
+    record["file"] = file
+    record["line_start"] = line
+    record["line_end"] = line
+    if provenance is not None:
+        record["provenance"] = provenance
+    if tool is not None:
+        record["detection"] = {"scanner": tool, "rule_id": rule}
+    return record
+
+
+def test_flat_fields_are_filled_into_location_and_sources():
+    result = run([flat(tool="semgrep", rule="py.sqli")])
+    record = result["findings"][0]
+    assert record["location"]["file"] == "app/orders.py"
+    assert record["location"]["line_start"] == 10
+    assert [s["tool"] for s in record["sources"]] == ["semgrep"]
+    assert result["dedupe"]["filled_from_flat_fields"] == 1
+
+
+def test_flat_provenance_survives_a_merge():
+    result = run([flat(tool="semgrep", rule="py.sqli"),
+                  flat(line=11, tool="bandit", rule="B608"),
+                  flat(line=12, provenance=[{"tool": "builtin", "rule_id": "sqli"}])])
+    assert len(result["findings"]) == 1
+    merged = result["findings"][0]
+    assert [s["tool"] for s in merged["sources"]] == ["bandit", "builtin", "semgrep"]
+    assert merged["corroborating_tools"] == ["bandit", "builtin", "semgrep"]
+
+
+def test_detection_and_provenance_are_unioned_without_duplicates():
+    result = run([flat(provenance=[{"tool": "semgrep", "rule_id": "py.sqli"}],
+                       tool="semgrep", rule="py.sqli")])
+    record = result["findings"][0]
+    assert [s["tool"] for s in record["sources"]] == ["semgrep"]
+
+
+def test_a_finding_with_no_provenance_keeps_an_empty_source_list():
+    result = run([flat()])
+    record = result["findings"][0]
+    # "No engine recorded" is not claimed to be "no engine looked": the key stays
+    # absent so finding.schema.json flags the record, and the count is reported.
+    assert "sources" not in record
+    assert result["dedupe"]["findings_without_provenance"] == 1
+    assert fm.validate(result)
+    assert record["location"]["file"] == "app/orders.py"
+
+
+def test_flat_findings_still_merge_by_site_and_stay_deterministic():
+    batch = [flat(tool="semgrep", rule="py.sqli"), flat(line=11, tool="bandit", rule="B608")]
+    first = json.dumps(run([dict(f) for f in batch]), sort_keys=True)
+    second = json.dumps(run([dict(f) for f in batch]), sort_keys=True)
+    assert first == second
+
+
+def test_three_way_merge_records_one_corroboration_note():
+    result = run([finding(tool="semgrep", rule="py.sqli"),
+                  finding(line=11, tool="bandit", rule="B608"),
+                  finding(line=12, tool="builtin", rule="sqli")])
+    merged = result["findings"][0]
+    notes = [f for f in merged["priority_factors"] if f.startswith("corroborated by ")]
+    assert notes == ["corroborated by 3 independent engines: bandit, builtin, semgrep"]
