@@ -296,10 +296,17 @@ The suite was written to break the pipeline, and it did. Each fix below is now p
 | 3 | No verification of the per-finding deliverables | A missing or stale `tickets/<ID>.json` was invisible | Added `_check_finding_file` plus `findings-index.json` cross-checks (presence, hash, totals) |
 | 4 | `validate_findings.py` discarded the redaction count | `redactions_applied: 0` on a run that redacted 2 secrets | `capture_evidence` returns its count and the caller sums it |
 | 5 | Findings had no per-finding machine-readable file | "Which JSON describes VULN-042?" had no answer | `OUTPUT_NAMES["index"]`, `build_index()`, index wired into `generate_reports.py` |
+| 6 | Not from this run: a later self-scan of `scripts/` reported 126 non-HTTP surfaces and 10 auth mechanisms | Reconnaissance read its own rule tables, docstrings and a commented-out decorator as live entry points and controls | `discover_auth` / `discover_non_http` now run against a comment- and string-blanked view with offsets preserved, non-HTTP rules must name a mechanism, and one surface is reported per kind per file; `test_self_scan_invents_no_surfaces` pins the result (16 real `__main__` guards, 0 web surfaces, 0 mechanisms) |
 
 Defect 5 came from a requirements change mid-validation (every finding must have its own JSON,
 aggregate metadata its own file) and is the reason `references/reporting-standard.md` gained its
 "Machine-readable deliverables" subsection.
+
+Defect 6 was found after this run, by pointing the tool at itself. Its fix changes no count in this
+document: both corpora still deliver 108 and 6 findings with byte-identical
+(id, category, severity, confidence, status) tuples. It is recorded here because the previous
+behaviour was a real precision bug in the stage this document treats as ground truth for
+"no visible authentication".
 
 ---
 
@@ -332,5 +339,5 @@ aggregate metadata its own file) and is the reason `references/reporting-standar
 The pipeline is internally consistent end to end: 20/20 required classes still detected on the
 vulnerable corpus, 6/6 recorded false positives and nothing else on the secure corpus, every
 delivered finding traceable to a rule and a code path, every count in the human-readable reports
-reproducible from the machine-readable dataset, and zero secret leaks. The five defects above were
+reproducible from the machine-readable dataset, and zero secret leaks. The six defects above were
 real and are now covered by tests; the five limitations above are real and are not.
