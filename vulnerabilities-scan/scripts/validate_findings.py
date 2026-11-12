@@ -851,6 +851,69 @@ def redact_finding(finding: Dict[str, Any], secrets: Sequence[str]) -> int:
     return total
 
 
+#: Unambiguous credential shapes: a match is a credential, never prose. The
+#: relaxed ``password=…`` assignment and the analyzer's document patterns are
+#: deliberately absent — a finding may legitimately quote a password rule, and a
+#: guard that cries wolf is a guard that gets switched off.
+#:
+#: This table exists because :func:`finding_model.find_leaks` can only search for
+#: values it was handed. Without ``--secrets-file`` it has nothing to look for,
+#: so a value the redaction table failed to cover passed the guard untouched: a
+#: Stripe key reached findings.json and every report that way while the AWS key
+#: beside it was replaced.
+_LEAK_GUARD_SHAPES: Tuple[Tuple[str, Any], ...] = (
+    ("AWS access key id", re.compile(r"\b(?P<secret>AKIA[0-9A-Z]{16})\b")),
+    ("GitHub token", re.compile(r"\b(?P<secret>(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,})\b")),
+    ("GitHub fine-grained token",
+     re.compile(r"\b(?P<secret>github_pat_[A-Za-z0-9_]{20,})\b")),
+    ("Slack token", re.compile(r"\b(?P<secret>xox[baprs]-[A-Za-z0-9-]{10,})\b")),
+    ("API key", re.compile(r"\b(?P<secret>sk-[A-Za-z0-9]{20,})\b")),
+    ("Stripe key", re.compile(r"\b(?P<secret>(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,})\b")),
+    ("Google API key", re.compile(r"\b(?P<secret>AIza[0-9A-Za-z_\-]{30,})\b")),
+    ("JWT", re.compile(r"\b(?P<secret>eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
+                       r"\.[A-Za-z0-9_\-]{10,})\b")),
+    ("private key", re.compile(r"(?P<secret>-----BEGIN [A-Z ]*PRIVATE KEY-----)")),
+    # The password sits inside the authority section, which looks like any URL.
+    ("password in a connection string",
+     re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql)://"
+                r"[^\s:/@]+:(?P<secret>[^\s@/]{1,120})@")),
+)
+
+#: Documented AWS example keys. They are in AWS's own documentation, every real
+#: scanner allow-lists them, and treating them as a leak would make the guard
+#: unusable on a finding that quotes the AWS docs.
+_EXAMPLE_KEYS = frozenset({"AKIAIOSFODNN7EXAMPLE", "AKIAI44QH8DHBEXAMPLE"})
+
+
+def find_shape_leaks(dataset: Dict[str, Any]) -> List[str]:
+    """Credential shapes still present in the dataset about to be written.
+
+    Unlike :func:`finding_model.find_leaks`, this needs no known-value list: it
+    looks for the shapes themselves, in every serialised field of every finding
+    plus the dataset-level blocks, so a value the redaction table missed is caught
+    before anything reaches disk.
+    """
+    haystacks: List[Tuple[str, str]] = []
+    for key in ("audit", "coverage", "generated_by"):
+        if key in dataset:
+            haystacks.append((key, json.dumps(dataset[key], ensure_ascii=False)))
+    for index, record in enumerate(dataset.get("findings") or []):
+        if isinstance(record, dict):
+            label = "findings[%d] %s" % (index, record.get("id") or "")
+            haystacks.append((label.strip(), json.dumps(record, ensure_ascii=False)))
+
+    leaks: List[str] = []
+    for where, blob in haystacks:
+        for name, pattern in _LEAK_GUARD_SHAPES:
+            for match in pattern.finditer(blob):
+                value = match.groupdict().get("secret") or match.group(0)
+                if value in _EXAMPLE_KEYS or _is_placeholder(value):
+                    continue
+                leaks.append("%s: %s not redacted" % (where, name))
+                break
+    return leaks
+
+
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
@@ -1105,6 +1168,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         path_policy=args.path_policy, max_findings=args.max_findings)
 
     leaks = fm.find_leaks(result, secrets) if secrets else []
+    leaks.extend(find_shape_leaks(result))
     if args.fail_on_leak and leaks:
         for leak in leaks:
             print("FAIL %s" % leak, file=sys.stderr)

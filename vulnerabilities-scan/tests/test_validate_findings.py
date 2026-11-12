@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -477,20 +478,27 @@ def test_capture_evidence_never_restores_a_redacted_secret(target):
     assert "[REDACTED STRIPE KEY]" in evidence
 
 
-def test_a_document_secret_never_reaches_a_deliverable(target, tmp_path):
-    """The end-to-end guarantee: no format prints the value stage 3 redacted."""
-    import builtin_analyzers as ba
-    import deduplicate_findings as df
-    import generate_reports as gr
-
+#: A repo whose documents carry two live-shaped credentials, driven through all
+#: four stages. Stripe and AWS are both here on purpose: the AWS shape was always
+#: redacted, the Stripe shape was not, and a test that only used AWS passed while
+#: the report printed ``sk_live_…`` in full.
+def _secret_corpus(target):
     stripe = "sk_live_" + "Z" * 24
     aws = "AKIA" + "Q" * 16
-    write(target, "README.md", "# Service\n\nDeploy key: " + stripe + "\n")
-    write(target, "notes.txt", "aws: " + aws + "\n")
-    write(target, "app/config.py", "AWS = '" + aws + "'\n")
+    write(target, "docs/onboarding.rst",
+          "Onboarding\n==========\n\nBilling key: " + stripe + "\n")
+    write(target, "notes.txt", "stripe: " + stripe + "\naws: " + aws + "\n")
     write(target, "app/query.py",
           "from flask import request\n\n\ndef handler(request):\n"
           "    return db.execute(\"SELECT * FROM t WHERE id=\" + request.args['id'])\n")
+    return stripe, aws
+
+
+def _run_pipeline(target, tmp_path):
+    """builtin_analyzers -> deduplicate_findings -> validate_findings -> reports."""
+    import builtin_analyzers as ba
+    import deduplicate_findings as df
+    import generate_reports as gr
 
     analysis = tmp_path / "analysis.json"
     analysis.write_text(json.dumps(ba.analyze(target)))
@@ -498,16 +506,135 @@ def test_a_document_secret_never_reaches_a_deliverable(target, tmp_path):
     deduped.write_text(json.dumps(df.deduplicate(json.loads(analysis.read_text()))))
     validated = tmp_path / "findings.json"
     assert vf.main([str(deduped), "--root", target, "--out", str(validated)]) == 0
+    return validated, gr
+
+
+def test_a_document_secret_never_reaches_a_deliverable(target, tmp_path):
+    """The end-to-end guarantee: no deliverable prints the value stage 3 redacted.
+
+    Stage 5 re-quotes the audited file, so its shape table has to know every
+    shape stage 3 can redact. When it did not, the Stripe key below came back in
+    full in every report format and in the ticket file.
+    """
+    stripe, aws = _secret_corpus(target)
+    validated, gr = _run_pipeline(target, tmp_path)
 
     outdir = tmp_path / "report"
     assert gr.main(["--dataset", str(validated), "--outdir", str(outdir),
                     "--formats", "markdown,html,json"]) == 0
 
-    written = [p for p in outdir.rglob("*") if p.suffix in (".md", ".html", ".json")]
+    written = sorted(p for p in outdir.rglob("*")
+                     if p.is_file() and p.suffix in (".md", ".html", ".json"))
     assert written, "no report files were written"
+    names = {p.relative_to(outdir).as_posix() for p in written}
+    assert "SECURITY-AUDIT-REPORT.md" in names
+    assert any(name.startswith("tickets/VULN-") for name in names), names
     for path in written:
         text = path.read_text(encoding="utf-8", errors="replace")
         assert stripe not in text, path
         assert aws not in text, path
     assert any("[REDACTED" in p.read_text(encoding="utf-8", errors="replace")
                for p in written), "redaction markers should be visible"
+
+    # The ticket is the file that used to print the key: check it on its own.
+    dataset = json.loads(validated.read_text())
+    expected = {f["id"] + ".json" for f in dataset["findings"]}
+    tickets = sorted((outdir / "tickets").glob("VULN-*.json"))
+    assert {t.name for t in tickets} == expected, [t.name for t in tickets]
+    assert len(expected) >= 2, "the corpus should produce a secret finding per document"
+    for ticket in tickets:
+        text = ticket.read_text(encoding="utf-8", errors="replace")
+        assert stripe not in text, ticket
+        assert aws not in text, ticket
+    secret_tickets = [t for t in tickets
+                      if t.stem in {f["id"] for f in dataset["findings"]
+                                    if f["category"] == "hardcoded_secret"}]
+    assert len(secret_tickets) >= 2, [t.name for t in tickets]
+    for ticket in secret_tickets:
+        assert "[REDACTED" in ticket.read_text(encoding="utf-8", errors="replace"), ticket
+
+
+def test_no_pdf_carries_a_redacted_secret(target, tmp_path):
+    """The same guarantee for the PDF, which is rendered text and easy to miss."""
+    for tool in ("pandoc", "xelatex", "pdftotext"):
+        if not shutil.which(tool):
+            pytest.skip("%s is not installed: the PDF branch cannot be checked here" % tool)
+
+    stripe, aws = _secret_corpus(target)
+    validated, gr = _run_pipeline(target, tmp_path)
+
+    outdir = tmp_path / "report"
+    assert gr.main(["--dataset", str(validated), "--outdir", str(outdir),
+                    "--formats", "markdown,html,json,pdf"]) == 0
+    pdf = outdir / "SECURITY-AUDIT-REPORT.pdf"
+    assert pdf.exists(), "the PDF toolchain was present but no PDF was written"
+
+    text = subprocess.run(["pdftotext", str(pdf), "-"],
+                          capture_output=True, text=True, check=True).stdout
+    assert stripe not in text
+    assert aws not in text
+    assert "REDACTED" in text, "the PDF should show the redaction marker, not nothing"
+
+
+# --------------------------------------------------------------------------- #
+# The leak guard must know the shapes, not only the values
+#
+# finding_model.find_leaks searches for values it was handed, so without a
+# --secrets-file it had nothing to search for at all: the Stripe key went through
+# a guard that reported no leaks. The shape guard closes that hole.
+# --------------------------------------------------------------------------- #
+
+#: One value per unambiguous shape the guard has to recognise. The relaxed
+#: ``password=…`` assignment is absent on purpose: a finding may legitimately
+#: describe a password rule, so the guard stays quiet about it.
+GUARDED_SHAPES = {
+    "AWS access key id": "AKIA" + "Q" * 16,
+    "GitHub token": "ghp_" + "Ab1" * 12,
+    "GitHub fine-grained token": "github_pat_" + "A" * 24,
+    "Slack token": "xoxb-" + "1234567890-abcdefghijkl",
+    "API key": "sk-" + "A" * 24,
+    "Stripe key": "sk_live_" + "Z" * 24,
+    "Google API key": "AIza" + "A" * 35,
+    "JWT": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0." + "x" * 43,
+    "private key": "-----BEGIN RSA PRIVATE KEY-----",
+    "password in a connection string": "postgresql://app:S3cretPassw0rd@db.internal:5432/app",
+}
+
+
+def test_every_guarded_shape_is_reported_wherever_it_sits():
+    for name, value in GUARDED_SHAPES.items():
+        dataset = {"schema_version": fm.SCHEMA_VERSION,
+                   "findings": [finding(references=["see " + value])]}
+        leaks = vf.find_shape_leaks(dataset)
+        assert leaks, name
+        assert name in leaks[0], leaks
+
+
+def test_the_leak_guard_accepts_markers_placeholders_and_documented_examples():
+    """A guard that fires on its own markers would be switched off within a day."""
+    clean = finding(references=[
+        "aws documentation: AKIAIOSFODNN7EXAMPLE",
+        "postgresql://app:[REDACTED]@db.internal:5432/app",
+        "postgresql://app:${DB_PASS}@db.internal:5432/app",
+        "billing key: [REDACTED STRIPE KEY]",
+        "token truncated as ghp_\u2026(40 chars)",
+    ])
+    dataset = {"schema_version": fm.SCHEMA_VERSION, "findings": [clean]}
+    assert vf.find_shape_leaks(dataset) == []
+
+
+def test_the_leak_guard_needs_no_secrets_file(target, tmp_path, capsys):
+    """The reported leak: no known-value list, so nothing was checked at all."""
+    stripe = "sk_live_" + "Z" * 24
+    write(target, "app/config.py", "K = 1\n")
+    source = tmp_path / "deduped.json"
+    # ``references`` is not a redacted field, so the value survives validation and
+    # the shape guard is the only thing between it and findings.json.
+    source.write_text(json.dumps({"findings": [
+        finding(file="app/config.py", line=1,
+                references=["https://dashboard.example.com/keys/" + stripe])]}))
+    out = tmp_path / "findings.json"
+
+    assert vf.main([str(source), "--root", target, "--out", str(out)]) == 1
+    assert not out.exists(), "a dataset with a live-shaped key must not be written"
+    assert "Stripe key" in capsys.readouterr().err
