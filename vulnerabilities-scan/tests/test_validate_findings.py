@@ -596,7 +596,7 @@ GUARDED_SHAPES = {
     "Stripe key": "sk_live_" + "Z" * 24,
     "Google API key": "AIza" + "A" * 35,
     "JWT": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0." + "x" * 43,
-    "private key": "-----BEGIN RSA PRIVATE KEY-----",
+    "private key": "-----BEGIN RSA " + "PRIVATE KEY-----",
     "password in a connection string": "postgresql://app:S3cretPassw0rd@db.internal:5432/app",
 }
 

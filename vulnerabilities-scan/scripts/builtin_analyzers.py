@@ -821,7 +821,8 @@ def _rule(rule_id: str, category: str, title: str,
           patterns: Sequence[Tuple[str, str]], note: str, *,
           severity: Optional[str] = None, confidence: str = "MEDIUM",
           needs_source: bool = False, guards: Sequence[str] = (),
-          max_per_file: int = 25,
+          max_per_file: int = 25, context: Optional[str] = None,
+          context_lines: int = 8,
           extra_references: Sequence[str] = ()) -> Dict[str, Any]:
     """Build one rule record.
 
@@ -829,6 +830,11 @@ def _rule(rule_id: str, category: str, title: str,
     source language, ``"iac"`` any infrastructure-as-code language and
     ``"config"`` any configuration language. ``note`` states what this specific
     pattern shows, and is appended to the category's general description.
+
+    ``context`` is an extra anchor: the match only counts when this regex also
+    matches the ``context_lines`` lines above it. It exists for rules whose
+    pattern is too generic to stand alone -- ``except ...: pass`` is a fail-open
+    only when the guarded block decides something security-relevant.
     """
     return {
         "id": rule_id,
@@ -841,6 +847,8 @@ def _rule(rule_id: str, category: str, title: str,
         "needs_source": needs_source,
         "guards": tuple(guards) if guards else GUARDS.get(category, ()),
         "max_per_file": max_per_file,
+        "context": context,
+        "context_lines": context_lines,
         "extra_references": tuple(extra_references),
     }
 
@@ -1475,7 +1483,12 @@ CONFIG_RULES: List[Dict[str, Any]] = [
            ("go", r"""if\s+err\s*!=\s*nil\s*\{\s*(?:_\s*=\s*err|//)""")),
           "An error is ignored and execution continues, so a failed permission or signature check "
           "does not stop the request.",
-          confidence="MEDIUM", max_per_file=10),
+          confidence="MEDIUM", max_per_file=10, context_lines=15,
+          context=r"""(?ix)
+            \b(?:auth\w*|permission\w*|privileg\w*|role|acl|token|jwt|oauth|session|login
+                 |credential\w*|passw\w*|secret|api_?key|signature|sign|verify\w*|validat\w*
+                 |cert\w*|decrypt\w*|encrypt\w*|hmac|csrf|sanitiz\w*|escap\w*|quote
+                 |is_admin|current_user|user_?id)\b"""),
 
     # ------------------------------------------------------------ Container --
     _rule("docker-root-user", "container_security", "Container runs as root",
@@ -1615,6 +1628,20 @@ def _line_of(starts: Sequence[int], offset: int) -> int:
     return bisect.bisect_right(starts, offset)
 
 
+def _match_line(text: str, starts: Sequence[int], match: Any) -> int:
+    """Line of the first content a match *contains*, not the offset it starts at.
+
+    Several rules anchor on ``^\\s*`` so they tolerate indentation. ``\\s`` also
+    matches a newline, so such a match can begin on an earlier line that holds
+    nothing but whitespace. Reporting that line points a reader at an indented
+    line or a blanked docstring instead of the code the rule matched.
+    """
+    for position in range(match.start(), match.end()):
+        if not text[position].isspace():
+            return _line_of(starts, position)
+    return _line_of(starts, match.start())
+
+
 def _shape_replacement(match: Any) -> str:
     """Replace one captured credential with a prefix-and-length marker.
 
@@ -1686,6 +1713,25 @@ def _guard_hit(line: str, rule: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _context_hit(lines: Sequence[str], line_no: int, pattern: str, window: int) -> bool:
+    """Does the anchor appear in the block this match's error handling guards?
+
+    The search starts at the nearest preceding ``try:`` (or at ``window`` lines
+    above when there is none), not at an arbitrary fixed offset: the question the
+    anchor answers is "did the swallowed exception protect a security decision?",
+    and only the guarded block can answer it. Looking further back would let an
+    unrelated ``token`` or ``auth`` mentioned earlier in the function vouch for
+    error handling that guards nothing.
+    """
+    first = max(1, line_no - window)
+    for candidate in range(line_no - 1, first - 1, -1):
+        if re.match(r"\s*try\s*:", lines[candidate - 1] if candidate <= len(lines) else ""):
+            first = candidate
+            break
+    block = "\n".join(lines[first - 1:line_no])
+    return re.search(pattern, block) is not None
+
+
 #: Buckets the *code-rule* pass reads: everything that carries program or
 #: deployment syntax, where an injection sink has meaning.
 CODE_BUCKETS = frozenset({"source", "config", "iac", "manifest"})
@@ -1699,6 +1745,14 @@ DOC_BUCKETS = frozenset({"docs"})
 #: Every bucket that is read at all. ``binary`` and ``unreadable`` stay out, and
 #: they are already counted in the inventory's coverage limitations.
 SCANNED_BUCKETS = CODE_BUCKETS | DOC_BUCKETS
+
+#: Files that *define* detection signatures rather than contain behaviour. Their
+#: patterns are stored as string literals, so running the rules those literals
+#: describe over the file reports the rules as findings -- a self-match by
+#: construction. Both passes skip them and record a limitation: the code rules
+#: would match their own pattern table, and the secret pass would match the
+#: fabricated credentials that table is tested with.
+SIGNATURE_FILES = frozenset({"builtin_analyzers.py", "validate_findings.py"})
 
 #: Language recorded for a document the inventory could not classify.
 DOC_LANGUAGE_FALLBACK = "text"
@@ -2163,18 +2217,32 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
         by_language[str(language)] = by_language.get(str(language), 0) + 1
         lines = text.splitlines()
         starts = _line_index(text)
+        # Rules and the secret pass read a *code-only view*: Python docstrings are
+        # blanked, string bodies and comments are kept. Docstrings are prose -- a
+        # rule name written in one is a description, not a call -- while a string
+        # *is* the credential and the sink a rule matches, and a comment is the
+        # evidence for two rule families (a commented-out authorization check, a
+        # credential pasted into a note). Offsets are preserved, so evidence and
+        # line numbers still quote the real file.
+        view = fm.mask_non_code(text, language, keep_strings=True,
+                                blank_docstrings=True, keep_comments=True)
+        signature_file = os.path.basename(rel) in SIGNATURE_FILES
+        if signature_file:
+            limitations.append(
+                f"{rel}: detection-signature file: the code-rule and secret passes are skipped "
+                f"because the pattern literals here describe the rules rather than behaviour")
         if document:
-            for finding, value in _secret_pass(text, lines, starts, rel=rel,
+            for finding, value in _secret_pass(view, lines, starts, rel=rel,
                                                language=language, document=True):
                 secrets_found.add(value)
                 secret_hits += 1
                 findings.append(finding)
             continue
-        tainted = _tainted_names(text)
+        tainted = _tainted_names(view)
         seen_lines: Set[Tuple[str, int]] = set()
         per_rule_counts: Dict[str, int] = {}
 
-        for rule in rules:
+        for rule in (() if signature_file else rules):
             applicable = [compiled for lang, compiled in rule["compiled"]
                           if _language_matches(language, bucket, lang)]
             if not applicable:
@@ -2182,8 +2250,8 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
             hits = 0
             cap = limit_per_file or rule["max_per_file"]
             for pattern in applicable:
-                for match in pattern.finditer(text):
-                    line_no = _line_of(starts, match.start())
+                for match in pattern.finditer(view):
+                    line_no = _match_line(view, starts, match)
                     key = (rule["id"], line_no)
                     if key in seen_lines:
                         continue
@@ -2201,6 +2269,10 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
                             })
                         seen_lines.add(key)
                         continue
+                    if rule["context"] and not _context_hit(
+                            lines, line_no, rule["context"], rule["context_lines"]):
+                        seen_lines.add(key)
+                        continue
                     seen_lines.add(key)
                     per_rule_counts[rule["id"]] = per_rule_counts.get(rule["id"], 0) + 1
                     if per_rule_counts[rule["id"]] > cap:
@@ -2216,12 +2288,15 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
                     f"first {cap} were reported")
 
         # ---- secrets ------------------------------------------------------- #
-        # The same pass the document buckets use; see _secret_pass.
-        for finding, value in _secret_pass(text, lines, starts, rel=rel,
-                                           language=language, document=False):
-            secrets_found.add(value)
-            secret_hits += 1
-            findings.append(finding)
+        # The same pass the document buckets use; see _secret_pass. A signature
+        # file is skipped: the shapes it stores are the vocabulary this pass
+        # matches with, so scanning it reports its own test corpus as leaks.
+        if not signature_file:
+            for finding, value in _secret_pass(view, lines, starts, rel=rel,
+                                               language=language, document=False):
+                secrets_found.add(value)
+                secret_hits += 1
+                findings.append(finding)
 
     dependency_findings, dependency_coverage = analyze_dependencies(root, files, limitations)
     findings.extend(dependency_findings)

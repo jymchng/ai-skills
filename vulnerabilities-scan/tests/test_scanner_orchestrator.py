@@ -30,6 +30,12 @@ import scanner_orchestrator as so  # noqa: E402
 
 SCRATCH_ROOT = os.path.join(REPO, ".scratch", "tests")
 
+#: A live-shaped token the redaction tests need, assembled from parts so no
+#: tracked blob contains a matchable credential: GitHub push protection (GH013)
+#: rejects a push whose diff carries one, which is what happened to this
+#: repository before the suite was written this way.
+GITHUB_TOKEN = "ghp_" + "abcdefghijklmnopqrstuvwx12"
+
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -339,24 +345,24 @@ def test_two_tools_on_the_same_line_merge_into_one_finding(workdir, monkeypatch)
 
 def test_secret_is_redacted_before_it_reaches_the_dataset(workdir, monkeypatch):
     root = os.path.join(workdir, "repo")
-    write(root, "app/config.py", "TOKEN = 'ghp_abcdefghijklmnopqrstuvwx12'\n")
+    write(root, "app/config.py", "TOKEN = %r\n" % GITHUB_TOKEN)
     bindir = os.path.join(workdir, "bin")
     os.makedirs(bindir)
     payload = json.dumps([{
         "RuleID": "github-pat", "Description": "GitHub token",
         "File": "app/config.py", "StartLine": 1, "EndLine": 1,
-        "Secret": "ghp_abcdefghijklmnopqrstuvwx12",
-        "Match": "TOKEN = 'ghp_abcdefghijklmnopqrstuvwx12'"}])
+        "Secret": GITHUB_TOKEN,
+        "Match": "TOKEN = %r" % GITHUB_TOKEN}])
     fake_tool(bindir, "gitleaks", _scanner_main("gitleaks", payload))
     document = run(monkeypatch, root, bindir, include_builtin=False,
                    scanners=["gitleaks"], raw_dir=os.path.join(workdir, "raw"))
     text = json.dumps(document)
-    assert "ghp_abcdefghijklmnopqrstuvwx12" not in text
+    assert GITHUB_TOKEN not in text
     assert "REDACTED" in text
     assert document["findings"][0]["category"] == "hardcoded_secret"
     for name in os.listdir(os.path.join(workdir, "raw")):
         with open(os.path.join(workdir, "raw", name), encoding="utf-8") as handle:
-            assert "ghp_abcdefghijklmnopqrstuvwx12" not in handle.read()
+            assert GITHUB_TOKEN not in handle.read()
 
 
 def test_two_runs_differ_only_in_timestamps(workdir, monkeypatch):

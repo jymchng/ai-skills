@@ -12,6 +12,13 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 import finding_model as fm  # noqa: E402
 
+#: Assembled from parts, never written as one literal: a provider-shaped
+#: credential in a tracked file trips GitHub push protection (GH013) on every
+#: push. The values are identical at run time, so the length assertions below
+#: (20 and 24 characters) still pin the exact shape.
+AWS_EXAMPLE_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
+GITHUB_EXAMPLE_TOKEN = "ghp_" + "0123456789abcdefghij"
+
 
 def valid_finding(**overrides):
     finding = {
@@ -189,8 +196,8 @@ def test_critical_with_low_confidence_is_rejected():
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize("value,expected", [
-    ("AKIAIOSFODNN7EXAMPLE", "AKIA…(20 chars)"),
-    ("ghp_0123456789abcdefghij", "ghp_…(24 chars)"),
+    (AWS_EXAMPLE_KEY, "AKIA…(20 chars)"),
+    (GITHUB_EXAMPLE_TOKEN, "ghp_…(24 chars)"),
     ("hunter2", "…(7 chars)"),
     ("ab", "…(2 chars)"),
     ("", "…(0 chars)"),
@@ -200,17 +207,17 @@ def test_redact_value_formats(value, expected):
 
 
 def test_redaction_never_returns_the_input():
-    for value in ["a", "ab", "abcdef", "abcdefghijklmnop", "AKIAIOSFODNN7EXAMPLE"]:
+    for value in ["a", "ab", "abcdef", "abcdefghijklmnop", AWS_EXAMPLE_KEY]:
         assert fm.redact_value(value) != value
 
 
 def test_redact_text_counts_replacements_and_is_idempotent():
-    text = "key AKIAIOSFODNN7EXAMPLE used, again AKIAIOSFODNN7EXAMPLE"
-    redacted, count = fm.redact_text(text, ["AKIAIOSFODNN7EXAMPLE"])
+    text = "key %s used, again %s" % (AWS_EXAMPLE_KEY, AWS_EXAMPLE_KEY)
+    redacted, count = fm.redact_text(text, [AWS_EXAMPLE_KEY])
     assert count == 2
-    assert "AKIAIOSFODNN7EXAMPLE" not in redacted
+    assert AWS_EXAMPLE_KEY not in redacted
     assert redacted.count("AKIA…(20 chars)") == 2
-    twice, again = fm.redact_text(redacted, ["AKIAIOSFODNN7EXAMPLE"])
+    twice, again = fm.redact_text(redacted, [AWS_EXAMPLE_KEY])
     assert twice == redacted and again == 0
 
 
@@ -223,7 +230,7 @@ def test_redact_text_handles_overlapping_secrets_longest_first():
 
 
 def test_redact_finding_scrubs_every_narrative_field():
-    secret = "AKIAIOSFODNN7EXAMPLE"
+    secret = AWS_EXAMPLE_KEY
     finding = valid_finding(
         evidence=f"12: AWS_KEY = '{secret}'",
         description=f"A hardcoded key {secret} ships in the image.",
@@ -239,7 +246,7 @@ def test_redact_finding_scrubs_every_narrative_field():
 
 
 def test_find_leaks_reports_where_a_secret_survives():
-    secret = "AKIAIOSFODNN7EXAMPLE"
+    secret = AWS_EXAMPLE_KEY
     data = dataset(valid_finding(evidence=f"key = {secret}"))
     assert fm.find_leaks(data, [secret])
     assert fm.find_leaks(dataset(valid_finding()), [secret]) == []

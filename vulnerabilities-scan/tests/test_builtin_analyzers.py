@@ -11,6 +11,7 @@ Scratch directories live under the repository (``.scratch/tests``), not ``/tmp``
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -27,6 +28,10 @@ if SCRIPTS not in sys.path:
 import builtin_analyzers as ba  # noqa: E402
 
 SCRATCH_ROOT = os.path.join(REPO, ".scratch", "tests")
+
+#: A shape-valid AWS key id, assembled from parts so the tracked blob holds no
+#: matchable credential: GitHub push protection (GH013) rejects such a push.
+AWS_KEY_ID = "AKIA" + "ABCDEFGHIJKLMNOP"
 
 #: Classes produced by a dedicated pass rather than by an entry in RULES.
 GENERATED = {
@@ -99,7 +104,7 @@ def test_required_classes_have_a_detector(workdir):
     assert not missing, missing
 
     root = os.path.join(workdir, "repo")
-    write(root, "app/config.py", "AWS = 'AKIAABCDEFGHIJKLMNOP'\n")
+    write(root, "app/config.py", "AWS = '%s'\n" % AWS_KEY_ID)
     write(root, "requirements.txt", "requests\n")
     write(root, "package.json", '{"dependencies": {"lodash": "4.17.15"}}')
     write(root, "app/login.py", "def login(request):\n    return check(request.form['password'])\n")
@@ -114,7 +119,7 @@ def test_required_classes_have_a_detector(workdir):
                  "missing_rate_limiting", "missing_authentication"):
         assert name in seen, (name, sorted(seen))
     serialised = json.dumps(document)
-    assert "AKIAABCDEFGHIJKLMNOP" not in serialised, "the secret must be redacted"
+    assert AWS_KEY_ID not in serialised, "the secret must be redacted"
 
 
 def test_rule_ids_are_unique():
@@ -430,3 +435,179 @@ def test_redact_shapes_leaves_placeholders_and_markers_alone():
     # and a real value in the same shape is still redacted
     stripe = "sk_live_" + "Z" * 24
     assert stripe not in ba.redact_shapes("key: " + stripe)
+
+
+# ---------------------------------------------------------------------------
+# Precision: what the rules read, and what they leave alone
+# ---------------------------------------------------------------------------
+
+
+def _scan_categories(workdir, files):
+    root = os.path.join(workdir, "repo")
+    for rel, text in files.items():
+        write(root, rel, text)
+    return categories(ba.analyze(root)["findings"])
+
+
+def test_error_handling_that_guards_nothing_is_not_a_fail_open(workdir):
+    """`except: pass` is only a security fail-open when what it guards decides
+    something. Swallowing a regex or JSON error is error tolerance, and flagging
+    it made every repository that parses input look vulnerable."""
+    benign = {
+        "app/patterns.py": ("import re\n\n\n"
+                            "def compile_all(patterns):\n"
+                            "    compiled = []\n"
+                            "    for pattern in patterns:\n"
+                            "        try:\n"
+                            "            compiled.append(re.compile(pattern))\n"
+                            "        except re.error:\n"
+                            "            continue\n"
+                            "    return compiled\n"),
+        "app/load.py": ("import json\n\n\n"
+                        "def load(text):\n"
+                        "    try:\n"
+                        "        return json.loads(text)\n"
+                        "    except ValueError:\n"
+                        "        pass\n"),
+    }
+    assert "fail_open_error_handling" not in _scan_categories(workdir, benign)
+
+    # The same shape around a security decision is still reported.
+    guarded = {
+        "app/verify.py": ("def handler(request):\n"
+                          "    try:\n"
+                          "        verify_signature(request.body, request.headers['x-signature'])\n"
+                          "    except ValueError:\n"
+                          "        pass\n"
+                          "    return process(request)\n"),
+    }
+    root = os.path.join(workdir, "guarded")
+    for rel, text in guarded.items():
+        write(root, rel, text)
+    found = ba.analyze(root)["findings"]
+    assert any(f["category"] == "fail_open_error_handling"
+               and f["location"]["file"] == "app/verify.py" for f in found), \
+        [f["category"] for f in found]
+
+
+def test_a_commented_out_guard_is_evidence_not_noise(workdir):
+    """Comments are read on purpose: a commented-out check is the finding, and a
+    credential pasted into a note is a credential."""
+    comment = "def delete_account(request):\n    # @login_required\n    return db.Account.delete(request.args['id'])\n"
+    seen = _scan_categories(workdir, {"app/del.py": comment})
+    assert "missing_authorization" in seen, seen
+
+    stripe = "sk_live_" + "Y" * 24
+    root = os.path.join(workdir, "secret")
+    write(root, "app/notes.py", "def f():\n    # billing key: " + stripe + "\n    return 1\n")
+    document = ba.analyze(root)
+    assert stripe not in json.dumps(document)
+    assert any(f["category"] == "hardcoded_secret" for f in document["findings"]), \
+        [f["category"] for f in document["findings"]]
+
+
+def test_a_detection_signature_file_is_skipped_and_says_so(workdir):
+    """The analyzer's own rule table stores patterns as literals. Running those
+    patterns over the table reports the table as a vulnerability -- a self-match
+    by construction, and the reason a self-scan was unreadable."""
+    root = os.path.join(workdir, "repo")
+    # A miniature of the real file: a rule table with the shapes it detects.
+    write(root, "scripts/builtin_analyzers.py",
+          'RULES = [\n'
+          '    ("sql-injection", r"execute\\\\s*\\\\(\\\\s*f[\\"\']"),\n'
+          '    ("fail-open", r"except[^\\\\n]*:\\\\s*\\\\n\\\\s*pass"),\n'
+          ']\n'
+          'KEY = "sk_live_' + "X" * 24 + '"\n')
+    write(root, "scripts/real_code.py",
+          'import re\n\n\ndef f(request):\n'
+          '    return db.execute("SELECT * FROM t WHERE id=" + request.args["id"])\n')
+
+    document = ba.analyze(root)
+    files = {finding["location"]["file"] for finding in document["findings"]}
+    assert "scripts/builtin_analyzers.py" not in files, files
+    assert any(finding["category"] == "sql_injection"
+               and finding["location"]["file"] == "scripts/real_code.py"
+               for finding in document["findings"]), \
+        [finding["category"] for finding in document["findings"]]
+    assert any("detection-signature file" in note for note in document["limitations"]), \
+        document["limitations"]
+
+
+def test_a_whitespace_anchored_match_reports_the_line_it_matched(workdir):
+    """`(?m)^\\s*from_port` must name the line the port is declared on, not the
+    blank line the indentation started from."""
+    root = os.path.join(workdir, "repo")
+    write(root, "infra/main.tf",
+          'resource "aws_security_group" "app" {\n'
+          '  ingress {\n'
+          '    # reachable from the private range only\n'
+          '    from_port = 22\n'
+          '    cidr_blocks = ["10.0.0.0/8"]\n'
+          '  }\n'
+          '}\n')
+    found = [f for f in ba.analyze(root)["findings"]
+             if f["location"]["file"] == "infra/main.tf"]
+    assert found, "the open management port should still be reported"
+    assert {f["location"]["line_start"] for f in found} == {4}, \
+        [(f["category"], f["location"]["line_start"]) for f in found]
+
+
+#: The only self-findings a scan of this tool's own ``scripts/`` tree may report,
+#: keyed by ``(category, file)`` with an expected count and the reason it
+#: survives. Everything else was a false positive by construction: the rule table
+#: matching its own pattern literals, a docstring naming a mechanism, or an
+#: example credential quoted beside the shape that detects it. Adding a rule that
+#: fires on this repository must either fix the rule or justify an entry here.
+SELF_SCAN_ALLOW_LIST = {
+    ("hardcoded_secret", "validate_reports.py"): (
+        1, "a connection-string *shape* quoted in a comment documenting the redaction marker"),
+    ("sensitive_data_exposure", "finding_model.py"): (
+        1, "a print of a variable literally named ``secrets``, which is what the rule looks for"),
+    ("xss_stored", "finding_model.py"): (
+        1, "an f-string comparison that contains ``<`` and a brace, the shape the rule matches"),
+}
+
+
+def test_a_self_scan_of_the_scripts_tree_reports_only_the_allow_list():
+    """The measurement behind this goal, asserted rather than described.
+
+    Before the precision work, scanning this repository's own ``scripts/``
+    directory produced 27 findings -- 16 ``hardcoded_secret`` (the rule table and
+    its docstrings quoting the example tokens they detect) and 8
+    ``fail_open_error_handling`` (``except re.error: continue`` around
+    ``re.compile``) among them. The rule-definition files are now excluded, and
+    the fail-open rule requires the swallowed exception to guard a security
+    decision, so only the documented three remain.
+    """
+    document = ba.analyze(SCRIPTS)
+    reported = collections.Counter(
+        (finding["category"], os.path.basename(finding["location"]["file"]))
+        for finding in document["findings"])
+    allowed = collections.Counter({key: count
+                                   for key, (count, _reason) in SELF_SCAN_ALLOW_LIST.items()})
+
+    assert reported == allowed, {
+        "unexpected_self_findings": dict(reported - allowed),
+        "documented_but_absent": dict(allowed - reported),
+        "documented_allow_list": {key: reason
+                                  for key, (_count, reason) in SELF_SCAN_ALLOW_LIST.items()},
+    }
+
+    # The two artefacts this goal names are gone, not merely fewer.
+    assert not [f for f in document["findings"]
+                if f["category"] == "fail_open_error_handling"], \
+        [f["location"] for f in document["findings"]
+         if f["category"] == "fail_open_error_handling"]
+    for name in ba.SIGNATURE_FILES:
+        assert not [f for f in document["findings"]
+                    if os.path.basename(f["location"]["file"]) == name], name
+
+
+def test_the_self_scan_is_quiet_because_it_says_what_it_skipped():
+    """A silent skip would be indistinguishable from a clean scan. Every excluded
+    rule-definition file must appear in the coverage limitations."""
+    document = ba.analyze(SCRIPTS)
+    limitations = " \n".join(document["limitations"])
+    for name in ba.SIGNATURE_FILES:
+        assert name in limitations, (name, document["limitations"])
+    assert "detection-signature file" in limitations

@@ -40,6 +40,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+import finding_model as fm  # noqa: E402
 import repository_inventory as inv  # noqa: E402
 
 TOOL_VERSION = "1.0.0"
@@ -165,91 +166,12 @@ def _http_method(raw: Optional[str]) -> str:
 # --------------------------------------------------------------------------- #
 # Code-only view
 # --------------------------------------------------------------------------- #
-#: Per-language comment/string syntax. Anything unlisted is treated as C-like,
-#: which is right for JS, TS, Go, Java, C#, Kotlin, Rust and Protobuf.
-_LINE_COMMENTS: Dict[str, Tuple[str, ...]] = {
-    "python": ("#",), "ruby": ("#",), "graphql": ("#",), "yaml": ("#",),
-    "dockerfile": ("#",), "shell": ("#",), "bash": ("#",),
-    "php": ("//", "#"), "terraform": ("#", "//"),
-    "javascript": ("//",), "typescript": ("//",), "go": ("//",), "java": ("//",),
-    "csharp": ("//",), "kotlin": ("//",), "rust": ("//",), "swift": ("//",),
-    "c": ("//",), "cpp": ("//",), "protobuf": ("//",),
-}
-#: Languages with no ``/* ... */`` form (or where it is not a comment).
-_NO_BLOCK_COMMENT = frozenset({"python", "ruby", "graphql", "yaml", "dockerfile",
-                               "shell", "bash", "text", "markdown", "json"})
-#: Languages that also use the backtick as a string delimiter.
-_BACKTICK_LANGS = frozenset({"javascript", "typescript", "go", "terraform", "shell"})
-
-
-def _syntax(language: str) -> Tuple[Tuple[str, ...], Optional[Tuple[str, str]], str]:
-    name = (language or "").lower()
-    line = _LINE_COMMENTS.get(name, ("//",))
-    block = None if name in _NO_BLOCK_COMMENT else ("/*", "*/")
-    quotes = "'\"" + ("`" if name in _BACKTICK_LANGS else "")
-    return line, block, quotes
-
-
+#: The lexer lives in :mod:`finding_model` because every stage needs the same
+#: "is this code or prose?" answer. Here the string bodies are blanked too: an
+#: auth mechanism is an identifier, never a literal, except for the handful of
+#: rules listed in :data:`AUTH_STRING_RULES`.
 def mask_non_code(text: str, language: str, keep_strings: bool = False) -> str:
-    """Return ``text`` with comments (and string bodies, unless kept) blanked.
-
-    Offsets and line numbers are preserved, so every match found in the masked
-    view can be reported against the original file. Two precision problems die
-    here: a docstring that *describes* a WebSocket server is not a WebSocket
-    server, and the rule tables in this very file (which contain the patterns
-    as literals) stop matching themselves. Without this, a self-scan of a
-    pure-Python CLI repository invented 126 non-HTTP surfaces.
-
-    ``keep_strings`` exists for the few rules whose evidence genuinely lives in
-    a literal -- ``->middleware('auth')``, ``$_SESSION['user']`` -- where the
-    code-only view would blank the only thing worth matching.
-    """
-    line_markers, block_pair, quotes = _syntax(language)
-    out = list(text)
-    length = len(text)
-    index = 0
-
-    def blank(start: int, end: int) -> None:
-        for position in range(start, min(end, length)):
-            if text[position] != "\n":
-                out[position] = " "
-
-    while index < length:
-        char = text[index]
-        matched_marker = None
-        for marker in line_markers:
-            if text.startswith(marker, index):
-                matched_marker = marker
-                break
-        if matched_marker is not None:
-            newline = text.find("\n", index)
-            end = length if newline < 0 else newline
-            blank(index, end)
-            index = end
-            continue
-        if block_pair and text.startswith(block_pair[0], index):
-            closing = text.find(block_pair[1], index + len(block_pair[0]))
-            end = length if closing < 0 else closing + len(block_pair[1])
-            blank(index, end)
-            index = end
-            continue
-        if char in quotes:
-            delimiter = char * 3 if text.startswith(char * 3, index) else char
-            cursor = index + len(delimiter)
-            while cursor < length:
-                if text[cursor] == "\\":
-                    cursor += 2
-                    continue
-                if text.startswith(delimiter, cursor):
-                    cursor += len(delimiter)
-                    break
-                cursor += 1
-            if not keep_strings:
-                blank(index + len(delimiter), cursor - len(delimiter))
-            index = cursor
-            continue
-        index += 1
-    return "".join(out)
+    return fm.mask_non_code(text, language, keep_strings=keep_strings)
 
 
 # --------------------------------------------------------------------------- #

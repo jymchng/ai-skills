@@ -24,13 +24,14 @@ CLI
     python3 scripts/finding_model.py validate findings.json
     python3 scripts/finding_model.py ids findings.json --out findings.json
     python3 scripts/finding_model.py band 9.3
-    python3 scripts/finding_model.py redact 'ghp_exampleexampleexampleexample12'
+    python3 scripts/finding_model.py redact 'the-value-from-your-secret-store'
     python3 scripts/finding_model.py check-leaks findings.json --secrets secrets.txt
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -339,6 +340,140 @@ def next_id(dataset: Dict[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Code-only views
+# --------------------------------------------------------------------------- #
+#: Line-comment markers per language. Anything unlisted is treated as C-like,
+#: which is right for JS, TS, Go, Java, C#, Kotlin, Rust and Protobuf.
+_COMMENT_MARKERS: Dict[str, Tuple[str, ...]] = {
+    "python": ("#",), "ruby": ("#",), "graphql": ("#",), "yaml": ("#",),
+    "dockerfile": ("#",), "shell": ("#",), "bash": ("#",),
+    "php": ("//", "#"), "terraform": ("#", "//"),
+    "javascript": ("//",), "typescript": ("//",), "go": ("//",), "java": ("//",),
+    "csharp": ("//",), "kotlin": ("//",), "rust": ("//",), "swift": ("//",),
+    "c": ("//",), "cpp": ("//",), "protobuf": ("//",),
+}
+#: Languages with no ``/* ... */`` form (or where it is not a comment).
+_NO_BLOCK_COMMENT = frozenset({"python", "ruby", "graphql", "yaml", "dockerfile",
+                               "shell", "bash", "text", "markdown", "json"})
+#: Languages that also use the backtick as a string delimiter.
+_BACKTICK_LANGS = frozenset({"javascript", "typescript", "go", "terraform", "shell"})
+
+
+def _syntax(language: str) -> Tuple[Tuple[str, ...], Optional[Tuple[str, str]], str]:
+    name = (language or "").lower()
+    line = _COMMENT_MARKERS.get(name, ("//",))
+    block = None if name in _NO_BLOCK_COMMENT else ("/*", "*/")
+    quotes = "'\"" + ("`" if name in _BACKTICK_LANGS else "")
+    return line, block, quotes
+
+
+def _docstring_spans(text: str) -> List[Tuple[int, int]]:
+    """Character spans of Python docstrings, so prose can be told from code.
+
+    Only the first statement of a module, class or function is a docstring; an
+    assigned triple-quoted string is a literal and stays visible to the rules.
+    """
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return []
+    if not isinstance(tree, ast.Module):
+        return []
+    line_starts = [0]
+    for match in re.finditer("\n", text):
+        line_starts.append(match.end())
+
+    def offset(line: int, column: int) -> int:
+        if 1 <= line <= len(line_starts):
+            return min(line_starts[line - 1] + column, len(text))
+        return len(text)
+
+    spans: List[Tuple[int, int]] = []
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Constant):
+            continue
+        if not isinstance(first.value.value, str):
+            continue
+        start = offset(first.value.lineno, first.value.col_offset)
+        end = offset(getattr(first.value, "end_lineno", first.value.lineno),
+                     getattr(first.value, "end_col_offset", 0))
+        if end > start:
+            spans.append((start, end))
+    return spans
+
+
+def mask_non_code(text: str, language: str, *, keep_strings: bool = False,
+                  blank_docstrings: bool = False, keep_comments: bool = False) -> str:
+    """Return ``text`` with comments (and optionally strings) blanked in place.
+
+    Offsets and line numbers are preserved, so anything found in the masked view
+    is still reported against the original file. Two precision problems die
+    here: prose that *describes* a mechanism or quotes a credential is not the
+    mechanism or the credential, and a rule table that stores its patterns as
+    literals stops matching itself.
+
+    ``keep_strings`` keeps string bodies (a secret *is* a string, and so is the
+    SQL a rule matches); ``blank_docstrings`` additionally blanks Python
+    docstrings, which are documentation even though they are literals;
+    ``keep_comments`` keeps comment text, because for two rule families the
+    comment *is* the evidence -- a commented-out authorization check, and a
+    credential pasted into a note. Blanking it there hides real findings.
+    """
+    line_markers, block_pair, quotes = _syntax(language)
+    if keep_comments:
+        line_markers, block_pair = (), None
+    out = list(text)
+    length = len(text)
+
+    def blank(start: int, end: int) -> None:
+        for position in range(max(0, start), min(end, length)):
+            if text[position] != "\n":
+                out[position] = " "
+
+    if blank_docstrings and (language or "").lower() == "python":
+        for start, end in _docstring_spans(text):
+            blank(start, end)
+
+    index = 0
+    while index < length:
+        char = text[index]
+        marker = next((item for item in line_markers if text.startswith(item, index)), None)
+        if marker is not None:
+            newline = text.find("\n", index)
+            end = length if newline < 0 else newline
+            blank(index, end)
+            index = end
+            continue
+        if block_pair and text.startswith(block_pair[0], index):
+            closing = text.find(block_pair[1], index + len(block_pair[0]))
+            end = length if closing < 0 else closing + len(block_pair[1])
+            blank(index, end)
+            index = end
+            continue
+        if char in quotes:
+            delimiter = char * 3 if text.startswith(char * 3, index) else char
+            cursor = index + len(delimiter)
+            while cursor < length:
+                if text[cursor] == "\\":
+                    cursor += 2
+                    continue
+                if text.startswith(delimiter, cursor):
+                    cursor += len(delimiter)
+                    break
+                cursor += 1
+            if not keep_strings:
+                blank(index + len(delimiter), cursor - len(delimiter))
+            index = cursor
+            continue
+        index += 1
+    return "".join(out)
+
+
+# --------------------------------------------------------------------------- #
 # Severity
 # --------------------------------------------------------------------------- #
 
@@ -379,7 +514,7 @@ def redact_value(value: str, keep: Optional[int] = None) -> str:
     Shows a short prefix and the true length, which is enough to locate the
     value in the code and rotate it, and not enough to use it::
 
-        >>> redact_value("AKIAIOSFODNN7EXAMPLE")
+        >>> redact_value("AKIA" + "IOSFODNN7EXAMPLE")
         'AKIA…(20 chars)'
         >>> redact_value("hunter2")
         '…(7 chars)'

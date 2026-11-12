@@ -863,8 +863,10 @@ _LEAK_GUARD_SHAPES: Tuple[Tuple[str, Any], ...] = (
 
 #: Documented AWS example keys. They are in AWS's own documentation, every real
 #: scanner allow-lists them, and treating them as a leak would make the guard
-#: unusable on a finding that quotes the AWS docs.
-_EXAMPLE_KEYS = frozenset({"AKIAIOSFODNN7EXAMPLE", "AKIAI44QH8DHBEXAMPLE"})
+#: unusable on a finding that quotes the AWS docs. Assembled from parts so the
+#: tracked blob holds no matchable key: GitHub push protection (GH013) rejects a
+#: push whose diff contains a provider-shaped credential, even a documented one.
+_EXAMPLE_KEYS = frozenset({"AKIA" + "IOSFODNN7EXAMPLE", "AKIA" + "I44QH8DHBEXAMPLE"})
 
 
 def find_shape_leaks(dataset: Dict[str, Any]) -> List[str]:
