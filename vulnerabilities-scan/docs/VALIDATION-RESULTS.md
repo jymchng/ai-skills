@@ -50,7 +50,49 @@ stale bytes as live.
 
 ---
 
-## 2. Test suite
+## 2. Deliverables shipped
+
+The acceptance criteria name sixteen deliverables. Each one is present in the tracked tree and was
+re-checked on this run; the *evidence* column is what that check actually printed, not a restatement
+of intent.
+
+| # | Deliverable | Path | Evidence on this run |
+|---|---|---|---|
+| 1 | Agent-facing workflow | `SKILL.md` | 169 lines; frontmatter is `name` / `description` / `compatibility` / `license` only, `name` matches the directory |
+| 2 | Operational references | `references/` | 8 documents: methodology, taxonomy, scoring, language guides, scanners, false positives, validation, reporting |
+| 3 | Finding contract | `schemas/finding.schema.json` | 20 required per-finding fields, plus enums for severity, confidence and validation_status |
+| 4 | Finding model | `scripts/finding_model.py` | load/save, schema validation, deterministic `VULN-NNN` ids, severity-from-score derivation, redaction helper |
+| 5 | Repository inventory | `scripts/repository_inventory.py` | discovery, excludes, binary/large/unreadable accounting, language census, manifests, git state |
+| 6 | Technology detection | `scripts/detect_technologies.py` | frameworks, runtimes, build systems, package managers, monorepo components |
+| 7 | Attack surface | `scripts/attack_surface.py` | routes, entry points, trust boundaries, auth mechanisms, GraphQL/WebSocket/RPC, workers |
+| 8 | Built-in analyzers | `scripts/builtin_analyzers.py` | 71 rules over the 20 required classes across 7 languages plus Docker/K8s/Terraform/Actions |
+| 9 | Scanner orchestration | `scripts/scanner_orchestrator.py` | 10 optional tools detected, timed out, captured and recorded as coverage limitations when absent |
+| 10 | Deduplication | `scripts/deduplicate_findings.py` | cross-analyzer merges by location/CWE/root cause, provenance preserved |
+| 11 | Validation and scoring | `scripts/validate_findings.py` | confidence assignment, compensating-control suppression, CVSS 4.0, evidence capture, redaction |
+| 12 | Templates | `templates/report.md.j2`, `templates/report.html.j2`, `templates/report.css` | self-contained HTML, no CDN, escaped untrusted content, print styles |
+| 13 | Renderers | `scripts/generate_markdown.py`, `generate_html.py`, `generate_pdf.py`, `generate_json.py`, `generate_reports.py` | one dataset rendered to every format, plus tickets, `findings-index.json` and `report-manifest.json` |
+| 14 | Report validator | `scripts/validate_reports.py` | exit 0 with 0 problems on both corpora (section 4); `--require-pdf` escalates a missing PDF |
+| 15 | Fixtures and test suite | `tests/` | 11 test modules plus `conftest.py`, 50 fixture files (24 vulnerable-app, 24 secure-app, 2 expectation data), 278 tests |
+| 16 | Research and validation record | `docs/RESEARCH.md`, `docs/RESEARCH-SOURCES.json`, `docs/VALIDATION-RESULTS.md`, `README.md` | dated sources with SHA-256 digests; this document; the human-facing install/use guide |
+
+Re-measure the inventory rather than trusting the table:
+
+```bash
+git ls-files | wc -l                        # 99 tracked files
+git ls-files references | wc -l             # 8
+git ls-files tests/test_*.py | wc -l        # 11
+git ls-files tests/fixtures | wc -l         # 50
+for s in scripts/*.py; do python3 "$s" --help >/dev/null || echo "no --help: $s"; done
+                                            # prints nothing: all 17 modules accept --help
+python3 -m pytest tests -q                  # 278 passed
+```
+
+Everything after this section is measurement. This section is the inventory that measurement
+attaches to.
+
+---
+
+## 3. Test suite
 
 ```
 278 passed in 33.02s
@@ -75,7 +117,7 @@ Every module runs offline and writes only under `.scratch/` (git-ignored).
 
 ---
 
-## 3. End-to-end audit: vulnerable corpus
+## 4. End-to-end audit: vulnerable corpus
 
 `tests/fixtures/vulnerable-app` — 24 files: 12 source, 7 manifest, 4 IaC, 1 document. The census
 carries 17 language labels (8 application languages, plus `dockerfile`, `kubernetes`, `terraform`,
@@ -185,7 +227,7 @@ was requested, which is accurate rather than a failure (`ok: true`, exit 0).
 
 ---
 
-## 4. End-to-end audit: secure look-alikes
+## 5. End-to-end audit: secure look-alikes
 
 `tests/fixtures/secure-app` — same shape: 24 files, the same 8 application languages and 71 rules
 evaluated. It names 17 frameworks/imports to the vulnerable corpus's 19, and the difference is a
@@ -214,7 +256,7 @@ rule and not file identity.
 
 ---
 
-## 5. Machine-readable deliverables
+## 6. Machine-readable deliverables
 
 Each of the 108 findings gets **exactly one** `.json` describing it; the aggregate metadata has its
 own file. This is the contract asserted by `test_report_generation.py` and
@@ -243,7 +285,7 @@ Index totals agree with the dataset in both corpora: 108 findings / 78 ticketabl
 
 ---
 
-## 6. Defects this validation found and fixed
+## 7. Defects this validation found and fixed
 
 The suite was written to break the pipeline, and it did. Each fix below is now pinned by a test.
 
@@ -261,7 +303,7 @@ aggregate metadata its own file) and is the reason `references/reporting-standar
 
 ---
 
-## 7. Limitations (unresolved, stated plainly)
+## 8. Limitations (unresolved, stated plainly)
 
 1. **No external scanners.** `php` and `javac` are absent in this environment, so the PHP and Java
    fixtures were reviewed by the built-in analyzers only; their syntax was validated by the
@@ -285,7 +327,7 @@ aggregate metadata its own file) and is the reason `references/reporting-standar
 
 ---
 
-## 8. Verdict
+## 9. Verdict
 
 The pipeline is internally consistent end to end: 20/20 required classes still detected on the
 vulnerable corpus, 6/6 recorded false positives and nothing else on the secure corpus, every
