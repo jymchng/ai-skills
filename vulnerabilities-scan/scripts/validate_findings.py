@@ -716,33 +716,16 @@ def _labelled_assignment_replacement(match: Any) -> str:
     return "%s=[REDACTED]" % match.group(1)
 
 
-def _connection_string_replacement(match: Any) -> str:
-    """Keep ``scheme://user:`` and the host; redact only the password."""
-    if _is_placeholder(match.group(2)):
-        return match.group(0)
-    return "%s[REDACTED]@" % match.group(1)
-
-
 _PATTERN_REDACTIONS: Tuple[Tuple[Any, Any], ...] = (
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED AWS KEY ID]"),
-    (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}\b"), "[REDACTED GITHUB TOKEN]"),
+    # Shapes the analyzer's own table does not carry. Everything it does carry is
+    # swept from ``_ANALYZER_REDACTIONS`` below, so one shape has one spelling: a
+    # hand-written copy of the analyzer's patterns is how ``[REDACTED STRIPE
+    # SECRET KEY]`` and ``[REDACTED STRIPE KEY]`` ended up in the same report.
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[REDACTED GITHUB TOKEN]"),
-    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "[REDACTED SLACK TOKEN]"),
     (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), "[REDACTED API KEY]"),
-    (re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b"), "[REDACTED STRIPE KEY]"),
-    (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"), "[REDACTED GOOGLE API KEY]"),
-    (re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
-     "[REDACTED JWT]"),
-    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
-     "[REDACTED PRIVATE KEY]"),
-    (re.compile(r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)\b\s*[=:]\s*['\"]?"
-                r"([^\s'\"]{6,})"),
+    (re.compile(r"\b(aws_secret_access_key)\s*[=:]\s*\S+", re.I), r"\1=[REDACTED]"),
+    (re.compile(r"(?i)\b(password|passwd|pwd|token|api[_-]?key)\b\s*[=:]\s*(?!['\"])([^\s'\"]{6,})"),
      _labelled_assignment_replacement),
-    # A connection string carries its password inside the authority section, so it
-    # reads as an ordinary URL to every pattern above.
-    (re.compile(r"(?i)\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql)://"
-                r"[^\s:/@]+:)([^\s@/]{1,120})@"),
-     _connection_string_replacement),
 )
 
 _REDACTABLE_FIELDS: Tuple[str, ...] = (
@@ -758,7 +741,8 @@ _REDACTABLE_FIELDS: Tuple[str, ...] = (
 #: step without a second hand-maintained list; the labelled entries above still
 #: win where they name a more specific marker.
 _ANALYZER_REDACTIONS: Tuple[Tuple[Any, str], ...] = tuple(
-    (re.compile(pattern), label) for _secret_id, pattern, label in ba.SECRET_PATTERNS
+    (re.compile(pattern), marker)
+    for _secret_id, pattern, _label, marker in ba.SECRET_PATTERNS
 )
 
 
@@ -780,39 +764,36 @@ def _substitute_counting(pattern: Any, replacement: Any, text: str) -> Tuple[str
     return pattern.sub(substitute, text), hits
 
 
-def _analyzer_shape_replacement(match: Any, label: str) -> str:
+def _analyzer_shape_replacement(match: Any, marker: str) -> str:
     """Replace the captured secret and keep the words around it.
 
-    The analyzer's patterns either name the value (``?P<secret>``) or match the
-    value as a whole, so ``password = "…"`` keeps its assignment and loses only
-    the literal. A placeholder is left alone: it is not a secret, and rewriting it
-    would erase the guidance that put it there.
+    The replacement is :func:`finding_model.redact_shape_match`, shared with the
+    analyzer and the orchestrator, so a shape has one marker spelling no matter
+    which stage quotes the text. A placeholder is left alone: it is not a secret,
+    and rewriting it would erase the guidance that put it there.
     """
-    named = match.groupdict().get("secret")
-    value = (named if named is not None else match.group(0)).strip().strip("'\"")
-    if _is_placeholder(value):
-        # Not a secret, or already replaced by an earlier pattern (a connection
-        # string's password becomes "[REDACTED]" and then matches again): leave it.
-        return match.group(0)
-    marker = "[REDACTED %s]" % label.upper()
-    if named is not None:
-        return match.group(0).replace(named, marker)
-    return marker
+    return fm.redact_shape_match(match, marker)
 
 
 def redact_text(text: Any, secrets: Sequence[str] = ()) -> Tuple[Any, int]:
-    """Exact-value redaction first, then credential-shape redaction."""
+    """Redact credential shapes first, then any exact value still present.
+
+    Shape sweep first on purpose: a shaped credential gets the shape marker the
+    analyzer wrote, instead of being re-spelled by the length marker this stage
+    uses for values it knows but cannot classify.
+    """
     if not isinstance(text, str) or not text:
         return text, 0
-    text, count = fm.redact_text(text, secrets)
+    count = 0
     for pattern, replacement in _PATTERN_REDACTIONS:
         text, hits = _substitute_counting(pattern, replacement, text)
         count += hits
-    for pattern, label in _ANALYZER_REDACTIONS:
+    for pattern, marker in _ANALYZER_REDACTIONS:
         text, hits = _substitute_counting(
-            pattern, lambda match, _label=label: _analyzer_shape_replacement(match, _label), text)
+            pattern, lambda match, _marker=marker: _analyzer_shape_replacement(match, _marker), text)
         count += hits
-    return text, count
+    text, exact = fm.redact_text(text, secrets)
+    return text, count + exact
 
 
 def redact_finding(finding: Dict[str, Any], secrets: Sequence[str]) -> int:

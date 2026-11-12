@@ -444,7 +444,7 @@ SECRET_SAMPLES = {
 def test_every_analyzer_secret_shape_is_also_redactable_here():
     import builtin_analyzers as ba
 
-    analyzer_ids = {secret_id for secret_id, _pattern, _label in ba.SECRET_PATTERNS}
+    analyzer_ids = {entry[0] for entry in ba.SECRET_PATTERNS}
     assert analyzer_ids == set(SECRET_SAMPLES), analyzer_ids ^ set(SECRET_SAMPLES)
 
     for secret_id, (text, sensitive) in SECRET_SAMPLES.items():

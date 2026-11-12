@@ -35,8 +35,8 @@ A candidate that cannot complete steps 3–4 is **not** reported as a vulnerabil
 | `sources` | Every engine that reported it, with rule ids |
 | `validation` | The steps performed and the controls searched, so the reader can audit the auditor |
 
-Secrets add one rule: the evidence line is **redacted at ingestion** — the value becomes a prefix and
-a length marker (`AKIA…(20 chars)`), and the raw value never enters `findings.json`.
+Secrets add one rule: the evidence line is **redacted at ingestion** — the value becomes the marker
+for its shape (`[REDACTED AWS KEY ID]`), and the raw value never enters `findings.json`.
 
 ## 3. The confidence ladder
 

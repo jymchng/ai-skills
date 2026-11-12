@@ -556,6 +556,39 @@ def redact_text(text: str, secrets: Iterable[str]) -> Tuple[str, int]:
     return text, count
 
 
+def shape_marker(marker: str) -> str:
+    """The one spelling of a redaction marker for a credential shape.
+
+    Every stage that sweeps text for credentials -- the analyzer's
+    :func:`builtin_analyzers.redact_shapes`, the validator's
+    :func:`validate_findings.redact_text` and the orchestrator's
+    :func:`scanner_orchestrator.redact` -- builds its marker here, so one shape
+    cannot be labelled ``[REDACTED STRIPE SECRET KEY]`` by one stage and
+    ``[REDACTED STRIPE KEY]`` by the next in the same report::
+
+        >>> shape_marker("stripe key")
+        '[REDACTED STRIPE KEY]'
+    """
+    return "[REDACTED %s]" % str(marker or "SECRET").strip().upper()
+
+
+def redact_shape_match(match: Any, marker: str) -> str:
+    """Replace the credential in *match* with :func:`shape_marker` of *marker*.
+
+    A pattern either names the value (``?P<secret>``) or matches it whole, so
+    ``client_secret = "..."`` keeps its assignment and loses only the literal,
+    and ``postgres://app:...@host`` keeps its scheme, user and host. Placeholders
+    and existing markers are returned untouched: rewriting them would erase the
+    guidance that put them there and re-spell a marker the previous stage wrote.
+    """
+    named = match.groupdict().get("secret")
+    value = (named if named is not None else match.group(0)).strip().strip("'\"")
+    if not value or is_placeholder(value) or "[REDACTED" in value or "\u2026" in value:
+        return match.group(0)
+    text = shape_marker(marker)
+    return match.group(0).replace(named, text) if named is not None else text
+
+
 #: Fields whose free text can leak a secret into a report narrative.
 _REDACTABLE_FIELDS: Tuple[str, ...] = (
     "title", "evidence", "description", "impact", "attack_scenario",

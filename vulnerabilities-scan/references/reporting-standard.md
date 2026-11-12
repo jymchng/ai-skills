@@ -85,8 +85,9 @@ Two rules make the set trustworthy:
 * Evidence in fenced blocks with a language tag so line numbers and redaction markers survive.
 * Relative anchors between findings; no absolute filesystem paths; no timestamps inside finding bodies
   (they make diffs meaningless).
-* Redaction markers are visible and informative: `AKIA…(20 chars, redacted)` — never a bare
-  `[REDACTED]` that hides whether a value existed.
+* Redaction markers are visible and informative: `[REDACTED AWS KEY ID]` names the shape that was
+  removed, so the reader knows a credential existed and what kind — never a bare `[REDACTED]` that
+  hides both.
 
 ## 4. HTML rules
 
@@ -133,8 +134,10 @@ because the next regeneration silently reverts it.
 
 * Applied **at ingestion**: the raw secret never reaches `findings.json`. Raw scanner output stays in
   `raw/`, which the report marks as sensitive and which is excluded from distribution by default.
-* Show a safe prefix and the length: `ghp_…(40 chars)`, `AKIA…(20 chars)`. Enough to locate and rotate
-  the value, not enough to use it.
+* Name the shape: `[REDACTED GITHUB TOKEN]`, `[REDACTED STRIPE KEY]`, `[REDACTED AWS KEY ID]`. Every
+  stage writes the same marker for the same shape (`finding_model.shape_marker`), so one report never
+  shows two labels for one credential. A secret with no recognisable shape falls back to a length
+  marker, `…(7 chars)`: enough to tell the reader something was removed, not enough to use it.
 * Redact in `evidence`, `description`, `impact`, `attack_scenario` and console output — a secret in the
   narrative is the most common leak in generated reports.
 * Recommend rotation with a provider-specific path when it is unambiguous, and never verify the

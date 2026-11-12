@@ -1355,26 +1355,40 @@ RULES: List[Dict[str, Any]] = [
 
 #: Secret patterns run in their own pass: the matched value must be redacted
 #: before the finding is built, so it is never written to disk.
-SECRET_PATTERNS: Tuple[Tuple[str, str, str], ...] = (
+#:
+#: ``(secret_id, pattern, label, marker)``. The *label* is prose and ends up in a
+#: finding's note ("A Stripe secret key was found and redacted here"); the
+#: *marker* is the word inside the redaction marker and is the single source of
+#: truth for how this shape is spelled in every stage's output. They are
+#: deliberately separate: a marker has to read well in a code excerpt
+#: (``[REDACTED STRIPE KEY]``), a label has to read well in a sentence ("Stripe
+#: secret key"), and deriving one from the other produced two spellings for one
+#: shape in one report.
+SECRET_PATTERNS: Tuple[Tuple[str, str, str, str], ...] = (
     ("aws-access-key", r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
-     "AWS access key id"),
-    ("private-key-block", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----",
-     "private key block"),
-    ("github-token", r"\bgh[pousr]_[A-Za-z0-9]{20,}\b", "GitHub token"),
-    ("slack-token", r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "Slack token"),
-    ("stripe-key", r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b", "Stripe secret key"),
-    ("google-api-key", r"\bAIza[0-9A-Za-z_\-]{35}\b", "Google API key"),
+     "AWS access key id", "AWS KEY ID"),
+    # The block is matched to its END delimiter when there is one: replacing only
+    # the header would leave the key material itself in the excerpt.
+    ("private-key-block",
+     r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+     r"(?:[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----)?",
+     "private key block", "PRIVATE KEY"),
+    ("github-token", r"\bgh[pousr]_[A-Za-z0-9]{20,}\b", "GitHub token", "GITHUB TOKEN"),
+    ("slack-token", r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "Slack token", "SLACK TOKEN"),
+    ("stripe-key", r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b",
+     "Stripe secret key", "STRIPE KEY"),
+    ("google-api-key", r"\bAIza[0-9A-Za-z_\-]{35}\b", "Google API key", "GOOGLE API KEY"),
     ("jwt-token", r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,}\b",
-     "JSON Web Token"),
+     "JSON Web Token", "JWT"),
     ("generic-assignment",
      r"""(?i)\b(?:password|passwd|pwd|secret|api[_-]?key|apikey|access[_-]?token|auth[_-]?token|"""
      r"""client[_-]?secret|private[_-]?key|encryption[_-]?key|signing[_-]?key)\b\s*[:=]\s*"""
      r"""["'](?P<secret>[^"'\n]{6,120})["']""",
-     "credential assigned a literal value"),
+     "credential assigned a literal value", "CREDENTIAL"),
     ("connection-string",
      r"""(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql)://[^\s:/@]+:"""
      r"""(?P<secret>[^\s@/]{1,120})@""",
-     "connection string with an inline password"),
+     "connection string with an inline password", "PASSWORD"),
 )
 
 #: Package versions with published, high-severity advisories. This is a curated
@@ -1642,19 +1656,14 @@ def _match_line(text: str, starts: Sequence[int], match: Any) -> int:
     return _line_of(starts, match.start())
 
 
-def _shape_replacement(match: Any) -> str:
-    """Replace one captured credential with a prefix-and-length marker.
+def _shape_replacement(match: Any, marker: str = "SECRET") -> str:
+    """Replace one captured credential with the marker for its shape.
 
     The analyzer's patterns either name the value (``?P<secret>``) or match the
     value as a whole, so ``password = "…"`` keeps its assignment and loses only
     the literal. Placeholders and markers are left alone.
     """
-    named = match.groupdict().get("secret")
-    value = (named if named is not None else match.group(0)).strip().strip("'\"")
-    if not value or fm.is_placeholder(value) or "[REDACTED" in value or "\u2026" in value:
-        return match.group(0)
-    marker = fm.redact_value(value)
-    return match.group(0).replace(value, marker) if named is not None else marker
+    return fm.redact_shape_match(match, marker)
 
 
 def redact_shapes(text: str) -> str:
@@ -1668,12 +1677,13 @@ def redact_shapes(text: str) -> str:
     """
     if not text or not isinstance(text, str):
         return text
-    for _secret_id, pattern_text, _label in SECRET_PATTERNS:
+    for _secret_id, pattern_text, _label, marker in SECRET_PATTERNS:
         try:
             compiled = re.compile(pattern_text)
         except re.error:
             continue
-        text = compiled.sub(_shape_replacement, text)
+        text = compiled.sub(
+            lambda match, _marker=marker: _shape_replacement(match, _marker), text)
     return text
 
 
@@ -1688,10 +1698,13 @@ def _evidence(lines: Sequence[str], line_no: int, *, redact: Optional[Iterable[s
         if len(text) > 400:
             text = text[:400] + " …"
         parts.append(f"{number:>5} | {text}")
-    excerpt = "\n".join(parts[:MAX_EVIDENCE_LINES])
+    # Shapes first: a credential the sweep recognises gets its shape marker
+    # everywhere, so quoting the same window twice cannot re-spell it. The
+    # known-value pass then catches a secret with no recognisable shape.
+    excerpt = redact_shapes("\n".join(parts[:MAX_EVIDENCE_LINES]))
     if redact:
         excerpt, _ = fm.redact_text(excerpt, redact)
-    return redact_shapes(excerpt)[:MAX_EVIDENCE_CHARS]
+    return excerpt[:MAX_EVIDENCE_CHARS]
 
 
 def _tainted_names(text: str) -> Set[str]:
@@ -1789,7 +1802,7 @@ def _secret_pass(text: str, lines: Sequence[str], starts: Sequence[int], *,
     count redactions and never serialises.
     """
     found: List[Tuple[Dict[str, Any], str]] = []
-    for secret_id, pattern_text, label in SECRET_PATTERNS:
+    for secret_id, pattern_text, label, marker in SECRET_PATTERNS:
         try:
             compiled = re.compile(pattern_text)
         except re.error:
@@ -1808,7 +1821,7 @@ def _secret_pass(text: str, lines: Sequence[str], starts: Sequence[int], *,
             line_text = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
             if document and DOC_ILLUSTRATIVE_RE.search(line_text):
                 continue
-            redacted = fm.redact_value(value)
+            redacted = fm.shape_marker(marker)
             evidence = _evidence(lines, line_no, span=1).replace(value, redacted)
             confidence = ("MEDIUM" if document and secret_id in AMBIGUOUS_IN_DOCUMENTS
                           else "HIGH")

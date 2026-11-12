@@ -51,7 +51,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
@@ -475,19 +475,17 @@ def _count_by_ext(files: Sequence[str], exts: Iterable[str]) -> int:
 # ---------------------------------------------------------------------------
 
 _SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
-     "[REDACTED PRIVATE KEY]"),
-    (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}\b"), "[REDACTED GITHUB TOKEN]"),
+    # Only shapes the analyzer's own table does not carry. The analyzer's shapes
+    # are added by :func:`_analyzer_shapes` with the marker text that table
+    # defines, so a credential is spelled one way in every stage's output: this
+    # list used to hold its own copies, which is how ``[REDACTED STRIPE SECRET
+    # KEY]`` here and ``[REDACTED STRIPE KEY]`` in the validator coexisted.
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[REDACTED GITHUB TOKEN]"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED AWS KEY ID]"),
     (re.compile(r"\baws_secret_access_key\s*[=:]\s*\S+", re.I), "aws_secret_access_key=[REDACTED]"),
-    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "[REDACTED SLACK TOKEN]"),
-    (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"), "[REDACTED GOOGLE API KEY]"),
     (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), "[REDACTED API KEY]"),
-    (re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
-     "[REDACTED JWT]"),
-    (re.compile(r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)\b\s*[=:]"
-                r"\s*['\"]?[^\s'\"<>,;)]{6,}"),
+    # An unquoted assignment; the quoted form is the analyzer's
+    # ``generic-assignment`` shape.
+    (re.compile(r"(?i)\b(password|passwd|pwd|token|api[_-]?key)\b\s*[=:]\s*(?!['\"])[^\s'\"<>,;)]{6,}"),
      lambda m: "%s=[REDACTED]" % m.group(1)),
 ]
 
@@ -504,7 +502,9 @@ def _analyzer_shapes() -> List[Tuple[re.Pattern, str]]:
 
     Imported lazily so ``--list-tools`` does not pay for the analyzer import, and
     taken from the analyzer's own table so the two cannot drift the way the
-    validator's table once did.
+    validator's table once did. Each shape keeps the marker text that table
+    defines, and the substitution is :func:`finding_model.redact_shape_match`, so
+    all three stages write the identical marker for the identical shape.
     """
     global _SHAPE_CACHE
     if _SHAPE_CACHE is None:
@@ -512,9 +512,19 @@ def _analyzer_shapes() -> List[Tuple[re.Pattern, str]]:
         if scripts_dir not in sys.path:
             sys.path.insert(0, scripts_dir)
         import builtin_analyzers as ba  # noqa: WPS433 - deliberate local import
-        _SHAPE_CACHE = [(re.compile(pattern_text), "[REDACTED %s]" % label.upper())
-                        for _secret_id, pattern_text, label in ba.SECRET_PATTERNS]
+        _SHAPE_CACHE = [(re.compile(pattern_text), marker)
+                        for _secret_id, pattern_text, _label, marker in ba.SECRET_PATTERNS]
     return _SHAPE_CACHE
+
+
+def _shape_substitute(marker: str) -> Callable[[re.Match], str]:
+    """Replacement callable for one shape, using the shared marker writer."""
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import finding_model as fm  # noqa: WPS433 - keeps the module import lazy
+
+    return lambda match: fm.redact_shape_match(match, marker)
 
 
 def _substitute_guarded(pattern: re.Pattern, replacement: Any,
@@ -540,8 +550,11 @@ def redact(text: str) -> Tuple[str, int]:
     if not text:
         return text, 0
     total = 0
-    for pattern, replacement in _SECRET_PATTERNS + _analyzer_shapes():
+    for pattern, replacement in _SECRET_PATTERNS:
         text, count = _substitute_guarded(pattern, replacement, text)
+        total += count
+    for pattern, marker in _analyzer_shapes():
+        text, count = _substitute_guarded(pattern, _shape_substitute(marker), text)
         total += count
     return text, total
 

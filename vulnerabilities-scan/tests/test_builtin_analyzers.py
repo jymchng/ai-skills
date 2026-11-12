@@ -261,10 +261,10 @@ def test_token_in_readme_is_detected_scored_and_redacted(workdir):
     assert "published" in finding["description"]
     assert finding["sources"] == [{"tool": "builtin_analyzers.py",
                                    "rule_id": "secret-github-token", "raw_ref": None}]
-    # redacted: the marker quotes a prefix and the true length, never the value
+    # redacted: the marker names the shape and never quotes the value
     assert token not in json.dumps(document)
     assert token not in finding["evidence"]
-    assert "ghp_\u2026(40 chars)" in finding["evidence"]
+    assert "[REDACTED GITHUB TOKEN]" in finding["evidence"]
     assert document["summary"]["secrets_redacted"] == 1
     assert document["summary"]["documents_scanned"] >= 1
     assert "docs" in document["coverage"]["buckets_scanned"]
@@ -342,7 +342,7 @@ def test_a_real_token_beside_an_illustration_is_still_reported(workdir):
     (finding,) = _scan(root)
     assert finding["location"]["line_start"] == 4
     assert token not in json.dumps(finding)
-    assert "ghp_\u2026(40 chars)" in finding["evidence"]
+    assert "[REDACTED GITHUB TOKEN]" in finding["evidence"]
 
 
 def test_doc_line_numbers_point_at_the_audited_file(workdir):
@@ -406,14 +406,14 @@ def test_a_secret_beside_an_unrelated_finding_is_redacted_from_its_evidence(work
     assert stripe not in json.dumps(document), "the raw key reached the analysis document"
     assert stripe not in evidence
     # the marker, not a blank: a reader still sees that something was redacted
-    assert "sk_l\u2026(32 chars)" in evidence, evidence
+    assert "[REDACTED STRIPE KEY]" in evidence, evidence
     # and the finding itself is still readable
     assert "SELECT * FROM orders WHERE id=" in evidence
 
     # the secret finding quotes its own window, centred one line earlier
     secret_finding = [f for f in document["findings"] if f["category"] == "hardcoded_secret"][0]
     assert stripe not in secret_finding["evidence"]
-    assert "sk_l\u2026(32 chars)" in secret_finding["evidence"]
+    assert "[REDACTED STRIPE KEY]" in secret_finding["evidence"]
 
 
 def test_build_finding_redacts_whatever_evidence_it_is_handed():
@@ -424,13 +424,14 @@ def test_build_finding_redacts_whatever_evidence_it_is_handed():
     record = ba.build_finding(rule, file="app/q.py", line_start=2, line_end=2,
                               evidence="    2 | key = " + stripe, language="python")
     assert stripe not in record["evidence"]
-    assert "sk_l\u2026(32 chars)" in record["evidence"]
+    assert "[REDACTED STRIPE KEY]" in record["evidence"]
 
 
 def test_redact_shapes_leaves_placeholders_and_markers_alone():
     assert ba.redact_shapes('api_key = "your-api-key-here"') == 'api_key = "your-api-key-here"'
-    marker = "    3 | billing: sk_l\u2026(32 chars)"
-    assert ba.redact_shapes(marker) == marker
+    for marker in ("    3 | billing: [REDACTED STRIPE KEY]",
+                   "    4 | billing: sk_l\u2026(32 chars)"):
+        assert ba.redact_shapes(marker) == marker
     assert ba.redact_shapes("password = \"${DB_PASS}\"") == "password = \"${DB_PASS}\""
     # and a real value in the same shape is still redacted
     stripe = "sk_live_" + "Z" * 24
