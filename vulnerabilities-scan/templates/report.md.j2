@@ -15,7 +15,7 @@ refer to this working tree, not to a published commit.{% endif %}
 
 | Severity | Count | Validated | Under investigation | Suppressed |
 | - | - | - | - | - |
-{% for name, count in counts.by_severity.items() %}| {{ name }} | {{ count }} | — | — | — |
+{% for row in counts.by_severity_detail %}| {{ row.name }} | {{ row.count }} | {{ row.validated }} | {{ row.needs_investigation }} | {{ row.suppressed }} |
 {% endfor %}| **Total** | **{{ counts.total }}** | {{ counts.validated }} | {{ counts.needs_investigation }} | {{ counts.suppressed }} |
 
 Confidence: {% for name, count in counts.by_confidence.items() %}{{ name }} {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}.

@@ -6,7 +6,7 @@
 <meta name="generator" content="vulnerabilities-scan {{ meta.skill_version }}">
 <title>Security Audit Report — {{ meta.repository }}</title>
 <style>
-{{ css }}
+{{ css|safe }}
 </style>
 </head>
 <body>
@@ -70,7 +70,7 @@
     <caption>Severity distribution. Counts are recomputed from the findings array.</caption>
     <thead><tr><th scope="col">Severity</th><th scope="col">Findings</th><th scope="col">Validated</th><th scope="col">Under investigation</th><th scope="col">Suppressed</th></tr></thead>
     <tbody>
-      {% for name, count in counts.by_severity.items() %}<tr><th scope="row"><span class="badge sev-{{ name|lower }}">{{ name }}</span></th><td>{{ count }}</td><td>—</td><td>—</td><td>—</td></tr>
+      {% for row in counts.by_severity_detail %}<tr><th scope="row"><span class="badge sev-{{ row.name|lower }}">{{ row.name }}</span></th><td>{{ row.count }}</td><td>{{ row.validated }}</td><td>{{ row.needs_investigation }}</td><td>{{ row.suppressed }}</td></tr>
       {% endfor %}<tr class="total-row"><th scope="row">Total</th><td>{{ counts.total }}</td><td>{{ counts.validated }}</td><td>{{ counts.needs_investigation }}</td><td>{{ counts.suppressed }}</td></tr>
     </tbody>
   </table>
@@ -80,7 +80,7 @@
     <thead><tr><th scope="col">Confidence</th><th scope="col">Count</th></tr></thead>
     <tbody>
       {% for name, count in counts.by_confidence.items() %}<tr><th scope="row">{{ name }}</th><td>{{ count }}</td></tr>
-      {% endfor}<tr><th scope="row">Scored with CVSS v4.0</th><td>{{ counts.scored }}</td></tr>
+      {% endfor %}<tr><th scope="row">Scored with CVSS v4.0</th><td>{{ counts.scored }}</td></tr>
       <tr><th scope="row">Explicitly unscored</th><td>{{ counts.unscored }}</td></tr>
     </tbody>
   </table>
@@ -166,6 +166,8 @@
     <p><strong>Attack scenario.</strong> {{ finding.attack_scenario }}</p>
     {% if finding.preconditions %}<p><strong>Preconditions.</strong> {{ finding.preconditions|join("; ") }}</p>{% endif %}
     {% if finding.sites|length > 1 %}<p><strong>Additional sites.</strong> {% for site in finding.sites %}<code>{{ site.file }}:{{ site.line_start }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    <details class="finding-body" open>
+    <summary>Evidence, remediation and references</summary>
     <h4>Evidence</h4>
     {% if finding.evidence.empty %}<p class="note">No source excerpt was captured for this finding.</p>{% else %}<pre class="evidence"><code>{{ finding.evidence.text }}</code></pre>{% endif %}
     <h4>Remediation</h4>
@@ -173,6 +175,7 @@
     {% if finding.references %}<h4>References</h4><ul class="refs">{% for reference in finding.references %}<li>{{ reference }}</li>
     {% endfor %}</ul>{% endif %}
     {% if finding.validation %}<details class="transcript"><summary>Validation transcript</summary><p>{{ finding.validation }}</p></details>{% endif %}
+    </details>
   </article>
   {% endfor %}
 </section>

@@ -203,6 +203,21 @@ pre.evidence code { color: inherit; }
 details.transcript summary { cursor: pointer; font-size: .85rem; color: var(--accent); }
 details.transcript p { font-size: .88rem; color: var(--muted); }
 
+/* The deep half of a finding. Open by default so nothing is hidden from a
+   reader who never touches the disclosure control, and so printing (which the
+   print block below also forces) can never drop evidence. */
+details.finding-body { margin-top: .4rem; }
+details.finding-body > summary {
+  cursor: pointer;
+  font-size: .82rem;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: .25rem 0;
+}
+details.finding-body > summary:hover { text-decoration: underline; }
+details.finding-body[open] > summary { margin-bottom: .3rem; }
+
 .gaps li, .negatives li, .suppressed-list li, .injection li { margin-bottom: .35rem; }
 .injection code { word-break: break-word; }
 
@@ -243,4 +258,8 @@ details.transcript p { font-size: .88rem; color: var(--muted); }
   a { color: #000000; text-decoration: none; }
   a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 8.5pt; word-break: break-all; }
   .cards { grid-template-columns: repeat(6, 1fr); }
+  /* A collapsed finding must never print as a heading with its evidence gone. */
+  details, details > summary { display: block; }
+  details:not([open]) > *:not(summary) { display: block; }
+  details > summary { list-style: none; }
 }
