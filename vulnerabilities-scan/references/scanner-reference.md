@@ -57,6 +57,14 @@ TruffleHog is excluded from automatic execution because verification means conta
 services with the discovered credential. If an operator runs it, the report records that
 verification happened externally.
 
+The built-in secret pass runs even when no external scanner exists, and it covers more than code:
+the documentation and text buckets (`README.md`, `docs/`, changelogs, `*.txt`, `.ipynb`) are read by
+the secret patterns too, because a token in a README is as usable as one in a module and the README is
+usually the more widely copied artefact. Those files are read for credentials *only* — a tutorial
+that quotes an injection payload is teaching, not shipping — a documentation line that reads like an
+illustration is skipped, and the two ambiguous shapes (a bare `password = "…"` assignment and a
+connection string with an inline password) are reported at MEDIUM confidence rather than HIGH.
+
 ### IaC, containers, CI
 
 | Tool | Targets | Invocation | Output | D |

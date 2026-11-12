@@ -28,6 +28,18 @@ Secrets are redacted at ingestion: the raw value is never written to the
 findings file, only a prefix and the true length, which is enough to locate and
 rotate the value and not enough to use it.
 
+Documents are scanned for credentials
+-------------------------------------
+A token committed to ``README.md``, ``docs/``, ``CHANGELOG``, an ``.ipynb`` or a
+plain-text note is as usable as one in a module, and those files are copied,
+mirrored and often published, so the secret pass runs over the documentation and
+text buckets as well as over code. Prose is *only* read by that pass: the
+injection heuristics are never run on it, so a SQL snippet in a tutorial does not
+become a finding. Two further rules keep documentation quiet enough to trust:
+a doc line that reads like an illustration is skipped, and the two ambiguous
+secret shapes (a generic ``password = "..."`` assignment and a connection
+string) are reported at MEDIUM confidence there rather than HIGH.
+
 Read-only, deterministic, standard library only.
 
 Usage
@@ -486,7 +498,8 @@ CATEGORY_META: Dict[str, Dict[str, Any]] = {
         "cwe": "CWE-798",
         "cwe_name": "Use of Hard-coded Credentials",
         "owasp": "A04:2025", "api": None, "severity": "High",
-        "description": "A credential, API key or private key is committed in source or configuration.",
+        "description": "A credential, API key or private key is committed in source, configuration or "
+                       "documentation.",
         "impact": "Direct access to the third-party or internal service the secret protects, for "
                   "anyone who can read the repository or an image built from it.",
         "scenario": "An attacker reads a frontend bundle or repository mirror and uses the embedded "
@@ -1642,6 +1655,95 @@ def _guard_hit(line: str, rule: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+#: Buckets the *code-rule* pass reads: everything that carries program or
+#: deployment syntax, where an injection sink has meaning.
+CODE_BUCKETS = frozenset({"source", "config", "iac", "manifest"})
+
+#: Buckets the secret pass reads in addition to :data:`CODE_BUCKETS`. These are
+#: prose: they are never run through the code rules, only through the credential
+#: patterns, because a tutorial that quotes ``db.execute(f"...{id}")`` is
+#: teaching, not shipping, while a token quoted in the same paragraph is live.
+DOC_BUCKETS = frozenset({"docs"})
+
+#: Every bucket that is read at all. ``binary`` and ``unreadable`` stay out, and
+#: they are already counted in the inventory's coverage limitations.
+SCANNED_BUCKETS = CODE_BUCKETS | DOC_BUCKETS
+
+#: Language recorded for a document the inventory could not classify.
+DOC_LANGUAGE_FALLBACK = "text"
+
+#: A documentation line that reads like an illustration rather than a leak.
+#: Documentation legitimately shows ``api_key = "your-key-here"`` or
+#: ``token=...``; reporting those would bury the one real credential sitting
+#: beside them, so such a line is skipped in the document buckets only.
+DOC_ILLUSTRATIVE_RE = re.compile(
+    r"(?i)(?:\b(?:example|examples|sample|samples|placeholder|dummy|fake|fake[_-]?\w*|"
+    r"redacted|changeme|change[_-]me|todo|fixme|invalid)\b|"
+    r"<your[-_ ]|your[-_ ]?(?:key|token|secret|password|api[-_]?key)|"
+    r"x{4,}|\.\.\.|\u2026)")
+
+#: Secret shapes that are ambiguous in prose: a literal ``password = "..."`` or a
+#: connection string may be a form sample rather than a live credential. They
+#: are still reported in documents, at MEDIUM confidence instead of HIGH, and
+#: provider-shaped tokens (``ghp_``, ``sk_live_``, ``AKIA``, a private key) stay
+#: HIGH because no example needs a checksum-valid looking key.
+AMBIGUOUS_IN_DOCUMENTS = frozenset({"generic-assignment", "connection-string"})
+
+
+def _secret_pass(text: str, lines: Sequence[str], starts: Sequence[int], *,
+                 rel: str, language: Optional[str],
+                 document: bool) -> List[Tuple[Dict[str, Any], str]]:
+    """Scan one file for credential shapes; return ``(finding, raw_value)`` pairs.
+
+    The same patterns run over code and over prose, because a credential does not
+    care where it was committed. ``document`` changes three things and nothing
+    else: the title says where the value was found, the note explains why a
+    published file is the worse place for it, and the two ambiguous shapes drop
+    to MEDIUM confidence. The value is redacted before the finding is built, so
+    the raw secret exists only in the returned tuple, which the caller uses to
+    count redactions and never serialises.
+    """
+    found: List[Tuple[Dict[str, Any], str]] = []
+    for secret_id, pattern_text, label in SECRET_PATTERNS:
+        try:
+            compiled = re.compile(pattern_text)
+        except re.error:
+            continue
+        for match in compiled.finditer(text):
+            value = match.groupdict().get("secret") or match.group(0)
+            value = value.strip().strip("'\"")
+            if not value or SECRET_PLACEHOLDER_RE.match(value):
+                continue
+            if len(value) < 6:
+                continue
+            if any(token in value for token in ("${", "{{", "os.environ", "process.env",
+                                                "getenv", "%s")):
+                continue
+            line_no = _line_of(starts, match.start())
+            line_text = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+            if document and DOC_ILLUSTRATIVE_RE.search(line_text):
+                continue
+            redacted = fm.redact_value(value)
+            evidence = _evidence(lines, line_no, span=1).replace(value, redacted)
+            confidence = ("MEDIUM" if document and secret_id in AMBIGUOUS_IN_DOCUMENTS
+                          else "HIGH")
+            note = (f"A {label} was found and redacted here ({redacted}). The value is not "
+                    f"written to this report; retrieve it from the audited file to rotate it.")
+            if document:
+                note += (" The match is in documentation, which is shipped, mirrored and often "
+                         "published: the credential is exposed to everyone who can read the "
+                         "repository, not only to those who can read the code.")
+            found.append((build_finding(
+                {"id": f"secret-{secret_id}", "category": "hardcoded_secret",
+                 "title": ("Hardcoded credential committed in documentation" if document
+                           else "Hardcoded credential committed in source"),
+                 "severity": "High", "confidence": confidence, "extra_references": ()},
+                file=rel, line_start=line_no, line_end=line_no,
+                evidence=evidence, language=language, note=note,
+            ), value))
+    return found
+
+
 def build_finding(rule: Dict[str, Any], *, file: str, line_start: int, line_end: int,
                   evidence: str, language: Optional[str], note: Optional[str] = None,
                   title: Optional[str] = None, severity: Optional[str] = None,
@@ -1992,14 +2094,20 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
 
     by_language: Dict[str, int] = {}
     scanned = 0
+    documents_scanned = 0
     skipped_large = 0
     secrets_found: Set[str] = set()
     secret_hits = 0
 
     for entry in files:
         rel = entry["path"]
-        if entry.get("bucket") not in ("source", "config", "iac", "manifest"):
+        bucket = entry.get("bucket")
+        if bucket not in SCANNED_BUCKETS:
             continue
+        # A document is read for credentials and nothing else. Prose has no
+        # call graph and no sinks: running the injection rules over a tutorial
+        # reports the tutorial.
+        document = bucket in DOC_BUCKETS
         if entry.get("too_large"):
             skipped_large += 1
             continue
@@ -2016,11 +2124,21 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
         if not text:
             continue
         language = entry.get("language")
-        bucket = entry.get("bucket")
+        if document and not language:
+            language = DOC_LANGUAGE_FALLBACK
         scanned += 1
+        if document:
+            documents_scanned += 1
         by_language[str(language)] = by_language.get(str(language), 0) + 1
         lines = text.splitlines()
         starts = _line_index(text)
+        if document:
+            for finding, value in _secret_pass(text, lines, starts, rel=rel,
+                                               language=language, document=True):
+                secrets_found.add(value)
+                secret_hits += 1
+                findings.append(finding)
+            continue
         tainted = _tainted_names(text)
         seen_lines: Set[Tuple[str, int]] = set()
         per_rule_counts: Dict[str, int] = {}
@@ -2067,37 +2185,12 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
                     f"first {cap} were reported")
 
         # ---- secrets ------------------------------------------------------- #
-        for secret_id, pattern_text, label in SECRET_PATTERNS:
-            try:
-                compiled = re.compile(pattern_text)
-            except re.error:
-                continue
-            for match in compiled.finditer(text):
-                value = match.groupdict().get("secret") or match.group(0)
-                value = value.strip().strip("'\"")
-                if not value or SECRET_PLACEHOLDER_RE.match(value):
-                    continue
-                if len(value) < 6:
-                    continue
-                line_no = _line_of(starts, match.start())
-                if any(token in value for token in ("${", "{{", "os.environ", "process.env",
-                                                    "getenv", "%s")):
-                    continue
-                secrets_found.add(value)
-                secret_hits += 1
-                redacted = fm.redact_value(value)
-                redacted_line = line_text = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
-                redacted_line = redacted_line.replace(value, redacted)
-                evidence = _evidence(lines, line_no, span=1)
-                findings.append(build_finding(
-                    {"id": f"secret-{secret_id}", "category": "hardcoded_secret",
-                     "title": "Hardcoded credential committed in source",
-                     "severity": "High", "confidence": "HIGH", "extra_references": ()},
-                    file=rel, line_start=line_no, line_end=line_no,
-                    evidence=evidence.replace(value, redacted), language=language,
-                    note=f"A {label} was found and redacted here ({redacted}). The value is not "
-                         f"written to this report; retrieve it from the audited file to rotate it.",
-                ))
+        # The same pass the document buckets use; see _secret_pass.
+        for finding, value in _secret_pass(text, lines, starts, rel=rel,
+                                           language=language, document=False):
+            secrets_found.add(value)
+            secret_hits += 1
+            findings.append(finding)
 
     dependency_findings, dependency_coverage = analyze_dependencies(root, files, limitations)
     findings.extend(dependency_findings)
@@ -2152,6 +2245,7 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
             "by_category": dict(sorted(by_category.items())),
             "by_confidence": dict(sorted(by_confidence.items())),
             "files_scanned": scanned,
+            "documents_scanned": documents_scanned,
             "rules_evaluated": len(rules),
             "suppressed": len(suppressed),
             "secrets_redacted": secret_hits,
@@ -2160,6 +2254,8 @@ def analyze(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
         "suppressed": suppressed,
         "coverage": {
             "files_scanned": scanned,
+            "documents_scanned": documents_scanned,
+            "buckets_scanned": sorted(SCANNED_BUCKETS),
             "by_language": dict(sorted(by_language.items())),
             "rules_evaluated": len(rules),
             "categories_covered": sorted({rule["category"] for rule in rules}),

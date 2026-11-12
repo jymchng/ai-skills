@@ -217,3 +217,159 @@ def test_each_finding_carries_the_mandatory_narrative(workdir):
         assert finding.get(field) not in (None, "", [], {}), field
     assert finding["cwe"]["id"] == "CWE-639"
     assert finding["evidence"].strip(), "evidence must quote the source line"
+
+
+# ---------------------------------------------------------------------------
+# documents and text buckets
+#
+# A credential committed to a README is as usable as one in a module, and the
+# file is usually published. Documents are read by the secret pass only, so a
+# tutorial's SQL snippet never becomes a finding.
+# ---------------------------------------------------------------------------
+
+def _github_token():
+    """A GitHub-shaped token, assembled so no literal in this file is a live key."""
+    return "ghp_" + "Ab1" * 12
+
+
+def test_token_in_readme_is_detected_scored_and_redacted(workdir):
+    token = _github_token()
+    root = os.path.join(workdir, "repo")
+    write(root, "README.md", f"# Deploy\n\nUse the key `{token}` when calling the API.\n")
+    write(root, "app/main.py", "def main():\n    return 1\n")
+
+    document = ba.analyze(root)
+    (finding,) = document["findings"]
+
+    assert finding["category"] == "hardcoded_secret"
+    assert finding["location"] == {"file": "README.md", "line_start": 3, "line_end": 3}
+    # tagged with the document language, not the code language
+    assert finding["language"] == "markdown"
+    # scored: a severity band and a priority, with the reason stated
+    assert finding["severity"] == "High"
+    assert finding["confidence"] == "HIGH"
+    assert finding["priority"] == "P1"
+    assert finding["priority_factors"][:2] == ["severity: High", "confidence: HIGH"]
+    # a doc-specific note, so the reader knows where it is and why it matters more
+    assert "documentation" in finding["title"]
+    assert "documentation" in finding["description"]
+    assert "published" in finding["description"]
+    assert finding["sources"] == [{"tool": "builtin_analyzers.py",
+                                   "rule_id": "secret-github-token", "raw_ref": None}]
+    # redacted: the marker quotes a prefix and the true length, never the value
+    assert token not in json.dumps(document)
+    assert token not in finding["evidence"]
+    assert "ghp_\u2026(40 chars)" in finding["evidence"]
+    assert document["summary"]["secrets_redacted"] == 1
+    assert document["summary"]["documents_scanned"] >= 1
+    assert "docs" in document["coverage"]["buckets_scanned"]
+
+
+def test_credentials_are_found_in_every_document_and_text_bucket(workdir):
+    token = _github_token()
+    root = os.path.join(workdir, "repo")
+    documents = {
+        "README.md": ("markdown", f"# App\n\nToken: {token}\n"),
+        "docs/guide.rst": ("rst", f"Guide\n=====\n\nKey: {token}\n"),
+        "CHANGELOG.md": ("markdown", f"## 1.1\n\n- rotate {token}\n"),
+        "notes.txt": ("text", f"reminder: {token}\n"),
+        "nb.ipynb": ("notebook", json.dumps({"cells": [{"source": [f"KEY = '{token}'"]}]})),
+        ".env.example": (None, f"API_KEY={token}\n"),
+    }
+    for rel, (_language, text) in documents.items():
+        write(root, rel, text)
+
+    document = ba.analyze(root)
+    found = {(f["location"]["file"], f["language"]) for f in document["findings"]}
+    for rel, (language, _text) in documents.items():
+        assert any(name == rel for name, _lang in found), (rel, sorted(found))
+        if language:
+            assert (rel, language) in found, (rel, sorted(found))
+    assert token not in json.dumps(document)
+
+
+def test_prose_never_produces_code_findings(workdir):
+    token = _github_token()
+    root = os.path.join(workdir, "repo")
+    write(root, "docs/tutorial.md",
+          "# Tutorial\n\n"
+          "```python\n"
+          "db.execute(f\"SELECT * FROM users WHERE id={request.args['id']}\")\n"
+          "```\n\n"
+          "The page then writes <script>alert(document.cookie)</script> unescaped.\n\n"
+          f"And here is the key it used: {token}\n")
+
+    document = ba.analyze(root)
+    seen = categories(document["findings"])
+    assert "sql_injection" not in seen, seen
+    assert "xss_reflected" not in seen, seen
+    assert seen == {"hardcoded_secret"}, seen
+    (finding,) = document["findings"]
+    assert finding["location"]["file"] == "docs/tutorial.md"
+    quoted = open(os.path.join(root, "docs/tutorial.md"), encoding="utf-8").read()
+    assert token in quoted.splitlines()[finding["location"]["line_start"] - 1]
+    assert token not in json.dumps(document)
+
+
+def test_illustrative_doc_lines_are_not_reported(workdir):
+    root = os.path.join(workdir, "repo")
+    write(root, "README.md",
+          "# Configuration\n\n"
+          "```\n"
+          "api_key = \"your-api-key-here\"\n"
+          "password = \"changeme\"\n"
+          "token = \"example\"\n"
+          "url = \"postgresql://user:...@localhost/db\"\n"
+          "```\n")
+    write(root, "docs/setup.rst", "Setup\n=====\n\nSet ``client_secret = \"sample\"`` first.\n")
+
+    assert _scan(root) == []
+
+
+def test_a_real_token_beside_an_illustration_is_still_reported(workdir):
+    token = _github_token()
+    root = os.path.join(workdir, "repo")
+    write(root, "README.md",
+          "# Configuration\n\n"
+          "api_key = \"your-api-key-here\"   # placeholder, safe\n"
+          f"Deploy with `{token}` now\n")
+
+    (finding,) = _scan(root)
+    assert finding["location"]["line_start"] == 4
+    assert token not in json.dumps(finding)
+    assert "ghp_\u2026(40 chars)" in finding["evidence"]
+
+
+def test_doc_line_numbers_point_at_the_audited_file(workdir):
+    token = _github_token()
+    root = os.path.join(workdir, "repo")
+    body = "".join(f"line {number}\n" for number in range(1, 20))
+    write(root, "docs/deploy.md", body + f"\nexport GITHUB_TOKEN={token}\n")
+    (finding,) = _scan(root)
+    with open(os.path.join(root, "docs/deploy.md"), encoding="utf-8") as handle:
+        quoted = handle.read().splitlines()[finding["location"]["line_start"] - 1]
+    assert token in quoted, (finding["location"], quoted)
+
+
+def test_document_findings_conform_to_the_schema(workdir):
+    """A document finding is a finding like any other: same mandatory fields.
+
+    The analysis document is checked against the JSON Schema only. The stage-5
+    cross-field rule that refuses ``unvalidated`` findings in a *reportable*
+    dataset does not apply yet: this is stage 3, and the status is deliberately
+    ``unvalidated``, exactly as it is for code findings.
+    """
+    import jsonschema
+
+    import finding_model as fm
+
+    token = _github_token()
+    root = os.path.join(workdir, "repo")
+    write(root, "README.md", f"# App\n\nKey: {token}\n")
+    document = ba.analyze(root)
+
+    problems = ["%s: %s" % ("/".join(str(part) for part in error.absolute_path), error.message)
+                for error in jsonschema.Draft202012Validator(fm.load_schema()).iter_errors(document)]
+    assert problems == []
+    assert document["findings"][0]["validation_status"] == "unvalidated"
+    assert "docs" in document["coverage"]["buckets_scanned"]

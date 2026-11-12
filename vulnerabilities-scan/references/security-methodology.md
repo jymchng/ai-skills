@@ -34,7 +34,7 @@ Classify every path into exactly one bucket:
 | `config` | `.yaml`, `.json`, `.toml`, `.ini`, `.env*`, `*.conf` | Analysed for secrets and dangerous settings |
 | `iac` | `Dockerfile`, `*.tf`, `k8s/*.yaml`, `.github/workflows/*.yml` | Analysed for infrastructure weaknesses |
 | `manifest` | `package.json`, `go.mod`, `composer.json`, `pom.xml`, `*.csproj`, `requirements.txt`, `Gemfile.lock` | Parsed for dependencies and lockfile integrity |
-| `docs` | `*.md`, `*.rst`, licence files | Not analysed for code weaknesses; scanned for accidentally committed secrets |
+| `docs` | `*.md`, `*.rst`, `*.adoc`, `*.txt`, licence files | Not analysed for code weaknesses; scanned for accidentally committed secrets |
 | `binary` | images, archives, `.class`, `.jar`, `.so`, `.exe`, `.wasm` | **Coverage gap** — recorded, never silently skipped |
 | `generated` | `dist/`, `build/`, `*.min.js`, `*_pb2.py` | Excluded by default; recorded as excluded |
 | `unreadable` | permission errors, broken symlinks, undecodable files | **Coverage gap** |
@@ -42,6 +42,13 @@ Classify every path into exactly one bucket:
 Submodules are recorded as separate repositories: their content is not in this snapshot, so findings
 inside them cannot be attributed to it. Very large files (default > 1 MiB, configurable) are
 inventoried but not analysed, and the report says so.
+
+The secret pass covers more buckets than the code-rule pass. Program logic, configuration,
+infrastructure and manifests are read by both; prose (`docs`, plus a notebook, which inventories as
+configuration) is read by the secret pass alone. That split is deliberate: credentials in a README are
+live and published, while the code fragments a README quotes are illustrations. The findings a
+document produces are therefore all `hardcoded_secret`, tagged with the document language, and worded
+so the reader knows the value is in a document rather than in code.
 
 Output invariants: every file counted exactly once; `len(files) == len(source) + len(config) + …`;
 the counts reconcile with what the report prints.
