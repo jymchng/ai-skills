@@ -1,0 +1,1035 @@
+{
+  "schema_version": "1.0",
+  "kind": "audit-corpus-expectations",
+  "generated_at": "2026-11-12T11:29:27Z",
+  "purpose": "Machine-readable expectations for the two fixture trees, read in both directions: every required class must still be produced by the vulnerable corpus, and the secure corpus must produce no findings beyond those recorded in known_false_positives.",
+  "measured_with": {
+    "inventory": "scripts/repository_inventory.py",
+    "attack_surface": "scripts/attack_surface.py",
+    "analyzers": "scripts/builtin_analyzers.py"
+  },
+  "corpora": {
+    "vulnerable-app": {
+      "files": 25,
+      "findings": 120,
+      "categories": 23,
+      "languages": [
+        "csharp",
+        "dockerfile",
+        "github-actions",
+        "go",
+        "gomod",
+        "java",
+        "javascript",
+        "json",
+        "kubernetes",
+        "markdown",
+        "php",
+        "python",
+        "ruby",
+        "terraform",
+        "text",
+        "typescript",
+        "xml"
+      ]
+    },
+    "secure-app": {
+      "files": 24,
+      "findings": 6,
+      "expected": 0,
+      "known_false_positives": 6
+    }
+  },
+  "classes": [
+    {
+      "id": "sql_injection",
+      "name": "SQL injection",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 7,
+        "files": [
+          {
+            "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "cs-sql-concat"
+            ]
+          },
+          {
+            "path": "go/main.go",
+            "rule_ids": [
+              "go-sql-concat"
+            ]
+          },
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "java-sql-concat"
+            ]
+          },
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "js-sql-concat"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "php-sql-concat"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "py-sql-concat"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "rb-sql-concat"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Bound parameters or a placeholder query",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "node/src/app.js",
+          "go/main.go",
+          "ruby/app/controllers/orders_controller.rb",
+          "php/orders.php",
+          "java/src/main/java/example/invalid/Orders.java",
+          "dotnet/OrdersController.cs"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "command_injection",
+      "name": "Command injection",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 4,
+        "files": [
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "cmd-java-runtime"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "cmd-php"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "cmd-shell-true"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "cmd-ruby"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Argument vector, no shell",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "go/main.go",
+          "ruby/app/controllers/orders_controller.rb",
+          "php/orders.php",
+          "java/src/main/java/example/invalid/Orders.java",
+          "dotnet/OrdersController.cs"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "xss_reflected",
+      "name": "Reflected XSS",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 8,
+        "files": [
+          {
+            "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "xss-response-request"
+            ]
+          },
+          {
+            "path": "go/main.go",
+            "rule_ids": [
+              "xss-response-request"
+            ]
+          },
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "xss-response-request"
+            ]
+          },
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "xss-innerhtml",
+              "xss-response-request"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "xss-response-request"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "xss-response-request"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "xss-unsafe-template"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Output encoded or escaped before it reaches the response",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "ruby/app/controllers/orders_controller.rb"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "xss_stored",
+      "name": "Stored XSS",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 2,
+        "files": [
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "xss-stored-unsafe"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "xss-stored-unsafe"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Stored value escaped at render time",
+        "files": [
+          "python/orders/views.py",
+          "php/orders.php"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "path_traversal",
+      "name": "Path traversal",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 6,
+        "files": [
+          {
+            "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "path-traversal"
+            ]
+          },
+          {
+            "path": "go/main.go",
+            "rule_ids": [
+              "path-traversal"
+            ]
+          },
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "path-traversal"
+            ]
+          },
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "path-traversal"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "path-traversal"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "path-traversal"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Basename reduction confined to the data root",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "go/main.go",
+          "ruby/app/controllers/orders_controller.rb",
+          "php/orders.php",
+          "dotnet/OrdersController.cs"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "ssrf",
+      "name": "SSRF",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 5,
+        "files": [
+          {
+            "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "ssrf-request-url"
+            ]
+          },
+          {
+            "path": "go/main.go",
+            "rule_ids": [
+              "ssrf-request-url"
+            ]
+          },
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "ssrf-request-url"
+            ]
+          },
+          {
+            "path": "node/src/app.js",
+            "rule_ids": [
+              "ssrf-request-url"
+            ]
+          },
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "ssrf-request-url"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Destination checked against a host allow-list",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "go/main.go"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "missing_authentication",
+      "name": "Missing authentication",
+      "detector": "builtin_analyzers",
+      "requires": [
+        "attack_surface"
+      ],
+      "vulnerable": {
+        "findings": 12,
+        "files": [
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "auth-identity-header"
+            ]
+          },
+          {
+            "path": "node/src/app.js",
+            "rule_ids": [
+              "surface-unauthenticated"
+            ]
+          },
+          {
+            "path": "python/orders/identity.py",
+            "rule_ids": [
+              "auth-disabled",
+              "auth-identity-header"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "surface-unauthenticated"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "auth-disabled"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Authentication required on the route; identity from the verified session",
+        "files": [
+          "python/orders/views.py",
+          "python/orders/identity.py",
+          "ruby/app/controllers/orders_controller.rb"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "missing_authorization",
+      "name": "Missing authorization",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 7,
+        "files": [
+          {
+            "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "authz-role-from-client"
+            ]
+          },
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "authz-role-from-client"
+            ]
+          },
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "authz-role-from-client"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "authz-role-from-client"
+            ]
+          },
+          {
+            "path": "python/orders/identity.py",
+            "rule_ids": [
+              "authz-check-commented"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "authz-role-from-client"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "authz-role-from-client"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Authorization decided from the stored principal, not the request",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "ruby/app/controllers/orders_controller.rb",
+          "php/orders.php",
+          "java/src/main/java/example/invalid/Orders.java",
+          "dotnet/OrdersController.cs"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "idor",
+      "name": "IDOR",
+      "detector": "builtin_analyzers",
+      "requires": [
+        "attack_surface"
+      ],
+      "vulnerable": {
+        "findings": 5,
+        "files": [
+          {
+            "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "idor-fetch-by-request-id"
+            ]
+          },
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "idor-fetch-by-request-id"
+            ]
+          },
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "idor-fetch-by-request-id"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "idor-fetch-by-request-id"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Ownership or tenant written into the lookup",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "java/src/main/java/example/invalid/Orders.java",
+          "dotnet/OrdersController.cs"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "weak_jwt_validation",
+      "name": "Weak JWT validation",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 3,
+        "files": [
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "jwt-no-verify"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "jwt-no-verify"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "jwt-no-verify"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Signature verified with an explicit algorithm allow-list",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "php/orders.php"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "hardcoded_secret",
+      "name": "Hardcoded secrets",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 3,
+        "files": [
+          {
+            "path": "python/orders/config.py",
+            "rule_ids": [
+              "secret-aws-access-key",
+              "secret-connection-string",
+              "secret-generic-assignment"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Every credential read from the environment at run time",
+        "files": [
+          "python/orders/config.py"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "weak_password_hashing",
+      "name": "Weak password hashing",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 5,
+        "files": [
+          {
+            "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "weak-password-hash"
+            ]
+          },
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "weak-password-hash"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "weak-password-hash"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "weak-password-hash"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "weak-password-hash"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Adaptive hash (bcrypt / argon2)",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts",
+          "ruby/app/controllers/orders_controller.rb",
+          "php/orders.php",
+          "java/src/main/java/example/invalid/Orders.java",
+          "dotnet/OrdersController.cs"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "insecure_deserialization",
+      "name": "Insecure deserialization",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 8,
+        "files": [
+          {
+            "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "unsafe-deserialization"
+            ]
+          },
+          {
+            "path": "go/main.go",
+            "rule_ids": [
+              "unsafe-deserialization"
+            ]
+          },
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "unsafe-deserialization"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "unsafe-deserialization"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "unsafe-deserialization"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "unsafe-deserialization"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Structured parsing (safe loader / JSON)",
+        "files": [
+          "python/orders/views.py",
+          "go/main.go",
+          "ruby/app/controllers/orders_controller.rb",
+          "php/orders.php",
+          "java/src/main/java/example/invalid/Orders.java",
+          "dotnet/OrdersController.cs"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "vulnerable_dependency",
+      "name": "Vulnerable dependency",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 7,
+        "files": [
+          {
+            "path": "java/pom.xml",
+            "rule_ids": [
+              "dependency-CVE-2021-44228"
+            ]
+          },
+          {
+            "path": "node/package.json",
+            "rule_ids": [
+              "dependency-CVE-2021-23337",
+              "dependency-CVE-2021-44906",
+              "dependency-CVE-2022-23529",
+              "dependency-CVE-2022-24999"
+            ]
+          },
+          {
+            "path": "python/requirements.txt",
+            "rule_ids": [
+              "dependency-CVE-2020-14343",
+              "dependency-CVE-2022-34265"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Manifests at or above the fixed release",
+        "files": [
+          "python/requirements.txt",
+          "node/package.json",
+          "java/pom.xml",
+          "dotnet/Service.csproj"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "permissive_cors",
+      "name": "Insecure CORS",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 5,
+        "files": [
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "cors-wildcard-credentials"
+            ]
+          },
+          {
+            "path": "node/src/app.js",
+            "rule_ids": [
+              "cors-wildcard-credentials"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "cors-reflection"
+            ]
+          },
+          {
+            "path": "python/orders/settings.py",
+            "rule_ids": [
+              "cors-wildcard-credentials"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Explicit origin allow-list, never a wildcard",
+        "files": [
+          "python/orders/settings.py",
+          "node/src/app.js",
+          "php/orders.php",
+          "java/src/main/java/example/invalid/Orders.java"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "unrestricted_upload",
+      "name": "Insecure file upload",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 2,
+        "files": [
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "upload-filename"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "upload-filename"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Generated name plus an allow-listed extension",
+        "files": [
+          "python/orders/uploads.py",
+          "php/orders.php",
+          "java/src/main/java/example/invalid/Orders.java"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "missing_rate_limiting",
+      "name": "Missing rate limiting",
+      "detector": "builtin_analyzers",
+      "requires": [
+        "attack_surface"
+      ],
+      "vulnerable": {
+        "findings": 1,
+        "files": [
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "surface-no-rate-limit"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Limiter and a login-attempt counter on the credential route",
+        "files": [
+          "python/orders/views.py"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "container_security",
+      "name": "Insecure Docker config",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 6,
+        "files": [
+          {
+            "path": "infra/Dockerfile",
+            "rule_ids": [
+              "docker-latest-tag",
+              "docker-privileged",
+              "docker-root-user",
+              "docker-secret-env"
+            ]
+          },
+          {
+            "path": "infra/k8s/deployment.yaml",
+            "rule_ids": [
+              "docker-privileged"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Pinned digest, unprivileged numeric user, no secrets in ENV",
+        "files": [
+          "infra/Dockerfile"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "cicd_permissions",
+      "name": "Over-privileged CI/CD",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 4,
+        "files": [
+          {
+            "path": ".github/workflows/ci.yml",
+            "rule_ids": [
+              "ci-pull-request-target",
+              "ci-secret-echo",
+              "ci-unpinned-action",
+              "ci-write-all"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Least-privilege permissions and SHA-pinned actions",
+        "files": [
+          ".github/workflows/ci.yml"
+        ],
+        "expected_findings": 0
+      }
+    },
+    {
+      "id": "business_logic",
+      "name": "Business-logic flaw",
+      "detector": "builtin_analyzers",
+      "requires": [],
+      "vulnerable": {
+        "findings": 6,
+        "files": [
+          {
+            "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "client-price"
+            ]
+          },
+          {
+            "path": "node/src/orders.ts",
+            "rule_ids": [
+              "client-price"
+            ]
+          },
+          {
+            "path": "php/orders.php",
+            "rule_ids": [
+              "client-price"
+            ]
+          },
+          {
+            "path": "python/orders/views.py",
+            "rule_ids": [
+              "client-price"
+            ]
+          },
+          {
+            "path": "ruby/app/controllers/orders_controller.rb",
+            "rule_ids": [
+              "client-price"
+            ]
+          }
+        ],
+        "assert": "at least one finding, and at least one in every listed file"
+      },
+      "secure": {
+        "control": "Amount recomputed server-side",
+        "files": [
+          "python/orders/views.py",
+          "node/src/orders.ts"
+        ],
+        "expected_findings": 0
+      }
+    }
+  ],
+  "known_false_positives": [
+    {
+      "category": "xss_reflected",
+      "file": "dotnet/OrdersController.cs",
+      "line": 37,
+      "rule_id": "xss-response-request",
+      "reason": "System.Net.WebUtility.HtmlEncode is not in the escaping-guard vocabulary, so encoded C# output is still reported.",
+      "status": "open"
+    },
+    {
+      "category": "kubernetes_security",
+      "file": "infra/k8s/deployment.yaml",
+      "line": 31,
+      "rule_id": "k8s-caps",
+      "reason": "The k8s-caps pattern matches a bare '- ALL' without checking whether it sits under add: or drop:, so a capability drop is read as a grant.",
+      "status": "open"
+    },
+    {
+      "category": "iac_misconfiguration",
+      "file": "infra/terraform/main.tf",
+      "line": 33,
+      "rule_id": "tf-open-cidr",
+      "reason": "The tf-open-cidr rule flags from_port = 22 without requiring an open cidr_blocks in the same block, so an SSH port limited to a private range is reported.",
+      "status": "open"
+    },
+    {
+      "category": "path_traversal",
+      "file": "java/src/main/java/example/invalid/Orders.java",
+      "line": 30,
+      "rule_id": "path-traversal",
+      "reason": "Java getFileName() is not recognised as a basename control, and toRealPath() on the preceding line is invisible to the line-scoped guard check.",
+      "status": "open"
+    },
+    {
+      "category": "missing_authentication",
+      "file": "python/orders/views.py",
+      "line": 120,
+      "rule_id": "surface-unauthenticated",
+      "reason": "surface-unauthenticated fires on an auth-prone /login route, which by definition cannot require authentication.",
+      "status": "open"
+    },
+    {
+      "category": "missing_authentication",
+      "file": "node/src/app.js",
+      "line": 14,
+      "rule_id": "surface-unauthenticated",
+      "reason": "An auth middleware passed inline as a route argument (requireAuth) is not detected as a mechanism by the attack-surface pass.",
+      "status": "open"
+    }
+  ],
+  "totals": {
+    "required_classes": 20,
+    "classes_detected": 20,
+    "vulnerable_findings": 120,
+    "secure_findings": 6
+  }
+}

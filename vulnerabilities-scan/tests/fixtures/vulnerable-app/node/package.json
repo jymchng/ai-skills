@@ -1,0 +1,11 @@
+{
+  "name": "vulnerable-app-node",
+  "private": true,
+  "comment": "Intentionally vulnerable fixture: dependencies below the fixed versions.",
+  "dependencies": {
+    "express": "4.17.0",
+    "lodash": "4.17.20",
+    "minimist": "1.2.5",
+    "jsonwebtoken": "8.5.1"
+  }
+}

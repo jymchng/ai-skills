@@ -1,0 +1,4 @@
+# Secure look-alike fixture: every dependency is at or above its fixed release
+django==4.2.16
+pyyaml==6.0.2
+requests==2.32.3

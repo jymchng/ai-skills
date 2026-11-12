@@ -1,0 +1,6 @@
+source "https://rubygems.org"
+
+# Secure look-alike fixture dependencies (pinned, current).
+gem "rails", "7.1.4"
+gem "nokogiri", "1.16.7"
+gem "rack", "3.0.9"

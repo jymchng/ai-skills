@@ -1,0 +1,11 @@
+{
+  "name": "secure-app-node",
+  "private": true,
+  "comment": "Secure look-alike fixture: dependencies at or above the fixed versions.",
+  "dependencies": {
+    "express": "4.19.2",
+    "lodash": "4.17.21",
+    "minimist": "1.2.8",
+    "jsonwebtoken": "9.0.2"
+  }
+}

@@ -1,0 +1,6 @@
+source "https://rubygems.org"
+
+# Intentionally vulnerable fixture dependencies.
+gem "rails", "6.0.0"
+gem "nokogiri", "1.10.0"
+gem "rack", "2.0.0"

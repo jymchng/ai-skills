@@ -1,0 +1,23 @@
+# Intentionally over-privileged workflow for the fixture.
+name: ci
+on:
+  pull_request_target:
+  push:
+    branches: [main]
+
+# cicd-permissions: the workflow may write anything
+permissions: write-all
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # cicd-permissions: unpinned third-party action
+      - uses: some-org/some-action@v3
+      # cicd-permissions: the pull request head is checked out under pull_request_target
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: publish
+        # cicd-permissions: a credential is printed in a step
+        run: echo "token is ${{ secrets.NPM_TOKEN }}"

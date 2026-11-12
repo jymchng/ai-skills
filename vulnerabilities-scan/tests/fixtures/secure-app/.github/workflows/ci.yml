@@ -1,0 +1,21 @@
+# Secure look-alike of the workflow: least privilege, SHA-pinned actions.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege at the workflow level.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Pinned by commit SHA, not a moving tag.
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+      - name: test
+        run: python -m pytest

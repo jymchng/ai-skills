@@ -1,0 +1,8 @@
+{
+  "name": "example/vulnerable-app-php",
+  "description": "Intentionally vulnerable fixture.",
+  "require": {
+    "guzzlehttp/guzzle": "6.5.0",
+    "symfony/http-kernel": "4.4.0"
+  }
+}
