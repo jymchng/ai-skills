@@ -77,15 +77,18 @@ Every module runs offline and writes only under `.scratch/` (git-ignored).
 
 ## 3. End-to-end audit: vulnerable corpus
 
-`tests/fixtures/vulnerable-app` — 24 files across 17 languages/buckets, 1 document, 5 buckets
-(`config`, `docs`, `iac`, `manifest`, `source`), 71 rules evaluated, 40 categories covered.
+`tests/fixtures/vulnerable-app` — 24 files: 12 source, 7 manifest, 4 IaC, 1 document. The census
+carries 17 language labels (8 application languages, plus `dockerfile`, `kubernetes`, `terraform`,
+`github-actions`, `gomod`, `json`, `markdown`, `text`, `xml`). All five buckets were scanned, but the
+`config` bucket contained no files, so four buckets contributed material. 71 rules evaluated, 40
+categories covered.
 
 ### 3.1 Stage counts
 
 | Stage | In | Out |
 |---|---|---|
 | Inventory | — | 24 files scanned |
-| Technologies | 24 files | 17 language buckets, frameworks incl. PyJWT, jsonwebtoken |
+| Technologies | 24 files | 8 application languages, 19 frameworks/imports incl. PyJWT, jsonwebtoken, and 7 runtimes |
 | Attack surface | 24 files | 14 HTTP routes (9 GET / 5 POST), 14 without visible auth, 4 auth mechanisms, 1 non-HTTP surface |
 | Analyzers | 24 files | **120 findings** |
 | Dedupe | 120 | **108 findings** (12 duplicates removed, 0 without provenance) |
@@ -102,6 +105,23 @@ All **20 of 20** required classes are still detected, with the exact per-class c
 `tests/fixtures/expected_findings.json` (`7,4,8,2,6,5,12,7,5,3,3,5,8,7,5,2,1,6,4,6`, total 120 in
 the pre-dedupe analysis), and every file declared vulnerable in that file exists on disk and
 carries a finding of its declared class.
+
+Measured in both directions, which is the only way "no false positives" means anything:
+
+| Measure | Expected | Detected | Missed | Unrecorded false positives |
+|---|---|---|---|---|
+| Required classes (vulnerable corpus) | 20 | 20 | 0 | — |
+| Declared vulnerable files | 17 | 17 | 0 | — |
+| Findings before dedupe (vulnerable) | 120 | 120 | 0 | — |
+| Findings after dedupe (vulnerable) | 108 | 108 | 0 | — |
+| Findings (secure corpus) | 6 recorded false positives | 6 | — | 0 |
+
+Per-class agreement is exact, not "at least one": for every one of the 20 classes the detected count
+equals the count recorded in `expected_findings.json` (asserted by
+`test_all_twenty_required_classes_are_still_detected`). The run reports 23 categories, not 20: the
+required 20 plus `iac_misconfiguration`, `kubernetes_security` and `unpinned_dependency`, which are
+real findings in the declared Dockerfile, Kubernetes, Terraform and dependency-manifest fixtures
+rather than noise from the source rules.
 
 `summary.by_category` over the 108 delivered findings:
 
@@ -142,13 +162,19 @@ dataset, the index, and exactly one per-finding JSON.
 ### 3.4 Delivered artefacts
 
 ```
-reports/SECURITY-AUDIT-REPORT.md    197 770 bytes   108 findings
-reports/SECURITY-AUDIT-REPORT.html  279 947 bytes   106 <article class="finding">
-reports/SECURITY-AUDIT-REPORT.json                 108 findings
-reports/findings-index.json                        108 entries
-reports/report-manifest.json                       format/size/sha256 per artefact
-reports/tickets/VULN-*.json                       108 files
+reports/SECURITY-AUDIT-REPORT.md     108 findings
+reports/SECURITY-AUDIT-REPORT.html   106 <article class="finding">
+reports/SECURITY-AUDIT-REPORT.json   108 findings
+reports/findings-index.json          108 entries
+reports/report-manifest.json         size + sha256 for every artefact above
+reports/tickets/VULN-*.json          108 files (one per finding)
 ```
+
+Exact byte counts are deliberately not quoted here: the rendered reports embed the audited
+commit, the dirty/clean state and `generated_at`, so their size changes with every run (the same
+corpus produced 197 770 / 279 947 bytes on a dirty tree at `39ecca9` and 197 341 / 279 496 bytes on
+the clean tree at `8148d2d`). The invariant is the finding count and the article count; the size and
+digest that did hold are recorded per run in `report-manifest.json`.
 
 The HTML carries 106 articles rather than 108 because the two suppressed findings are excluded
 from the human-readable report while remaining present in the machine-readable dataset and index —
@@ -161,7 +187,10 @@ was requested, which is accurate rather than a failure (`ok: true`, exit 0).
 
 ## 4. End-to-end audit: secure look-alikes
 
-`tests/fixtures/secure-app` — same shape, 24 files, 17 language buckets, 71 rules evaluated.
+`tests/fixtures/secure-app` — same shape: 24 files, the same 8 application languages and 71 rules
+evaluated. It names 17 frameworks/imports to the vulnerable corpus's 19, and the difference is a
+property of the fixtures rather than drift: the secure tree loses `YAML`, `encoding/gob` and
+`pickle` (its implementations do not import unsafe deserialisers) and gains `Helmet`.
 
 | Measure | Value |
 |---|---|
@@ -195,7 +224,7 @@ own file. This is the contract asserted by `test_report_generation.py` and
 |---|---|---|
 | `findings-index.json` | One entry per finding: `id`, `kind`, `file`, `line_start`, `line_end`, `category`, `title`, `severity`, `confidence`, `priority`, `validation_status`, `ticketable`, `ticketable_reason`, `ticket{path, sha256}` — plus `totals` | `generate_reports.py` |
 | `tickets/<ID>.json` | The full per-finding description: location, evidence with line context, CVSS 4.0 vector and score, remediation, references, provenance | `generate_reports.py` |
-| `report-manifest.json` | The aggregate record: run identity in `meta` (repository, commit, branch, dirty state, audit date, skill version, dataset stage and tool), counts by severity, status and confidence, and every artefact with its size and SHA-256 | `generate_reports.py` |
+| `report-manifest.json` | The aggregate record: run identity in `meta` (repository, commit, branch, dirty state, audit date, skill version, dataset stage and tool), counts by severity and validation status (`counts.by_severity_detail` breaks severity down by validated / needs-investigation / suppressed), and every artefact with its size and SHA-256 | `generate_reports.py` |
 | `SECURITY-AUDIT-REPORT.json` | Aggregate report document (the same content the Markdown and HTML render) | `generate_reports.py` |
 
 Two things in that area are deliberately *not* written into the report directory:
