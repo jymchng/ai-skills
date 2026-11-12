@@ -1,0 +1,21 @@
+# Research fetches are reproducible from docs/RESEARCH-SOURCES.json (URL + SHA-256).
+# They are large and machine-specific, so they are not committed.
+.research/
+
+# Local scratch space for fixtures and test runs (never committed).
+.scratch/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Audit output produced while testing the skill
+/tests/out/
+/tmp-audit/
+*.egg-info/
+
+# Agent runtime state (not part of the skill)
+.agenthicc/
+tests/.cassette/

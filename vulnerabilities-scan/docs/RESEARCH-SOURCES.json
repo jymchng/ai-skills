@@ -1,0 +1,217 @@
+{
+  "fetched_at_utc": "2026-11-12T08:01:07+00:00",
+  "fetcher": "curl -sSL",
+  "count": 30,
+  "sources": [
+    {
+      "url": "https://agentskills.io/specification.md",
+      "artifact": ".research/agentskills-spec.md",
+      "description": "Agent Skills format specification (frontmatter fields, dirs, progressive disclosure, validation)",
+      "bytes": 7685,
+      "sha256": "bf4137a702014f82a022de532e597c5f92ea86fb53fe29ea27bee3bbc1d19738"
+    },
+    {
+      "url": "https://agentskills.io/llms.txt",
+      "artifact": ".research/llms.txt",
+      "description": "Documentation index used to discover the skill-authoring guides",
+      "bytes": 1365,
+      "sha256": "c312e2e9dd5d99206b927a99b47aacc12b56c30ba876ca67c205935f21da5831"
+    },
+    {
+      "url": "https://agentskills.io/skill-creation/using-scripts.md",
+      "artifact": ".research/using-scripts.md",
+      "description": "Bundling/invoking scripts; relative paths; self-contained scripts",
+      "bytes": 12376,
+      "sha256": "c8a0792d224d8bdc98741cf741c2cd9e0cd36457cb3930df791f18e81fca31d0"
+    },
+    {
+      "url": "https://agentskills.io/skill-creation/best-practices.md",
+      "artifact": ".research/best-practices.md",
+      "description": "Skill authoring best practices",
+      "bytes": 15060,
+      "sha256": "ab9f3b6091a0f24816b52cd7b90a3fdf53e621f47dba13b36694be272b87fb41"
+    },
+    {
+      "url": "https://agentskills.io/skill-creation/optimizing-descriptions.md",
+      "artifact": ".research/optimizing-descriptions.md",
+      "description": "Description/trigger quality guidance",
+      "bytes": 13403,
+      "sha256": "7cc54fbb6abbcf08c33e7b320fd01a1fb9696426270da3b588a398d243bfd837"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/skills/main/spec/agent-skills-spec.md",
+      "artifact": ".research/anthropic-spec-pointer.md",
+      "description": "Anthropic pointer confirming spec moved to agentskills.io",
+      "bytes": 87,
+      "sha256": "ff22f2be775f4b757c9a7a2df0421de4c94021d34d9382cea5dd567ff0cdad2c"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/skills/main/template/SKILL.md",
+      "artifact": ".research/anthropic-template-SKILL.md",
+      "description": "Official minimal skill template",
+      "bytes": 140,
+      "sha256": "eb685d91de039ed864fbd790cddf31684b017fd4a34ee1a55760d8d7cdbadefa"
+    },
+    {
+      "url": "https://owasp.org/Top10/2025/",
+      "artifact": ".research/owasp-top10-2025.html",
+      "description": "OWASP Top 10:2025 category list",
+      "bytes": 26117,
+      "sha256": "1203f554f0770ae735ca70bc9621ae6769d7d159eec74dede39a342bb17bc52d"
+    },
+    {
+      "url": "https://owasp.org/www-project-application-security-verification-standard/",
+      "artifact": ".research/asvs.html",
+      "description": "ASVS 5.0.0 + requirement reference format",
+      "bytes": 25827,
+      "sha256": "47af8a63b622878d9b84d9366c0123cc41d06b48445130f2e535c4cfd56dee76"
+    },
+    {
+      "url": "https://owasp.org/API-Security/editions/2023/en/0x11-t10/",
+      "artifact": ".research/api-top10-2023.html",
+      "description": "OWASP API Security Top 10:2023 list",
+      "bytes": 34156,
+      "sha256": "ac00589e1bb28f4977b3c82dfb61713b7aac0cbd07b15bd40d8516ef86379524"
+    },
+    {
+      "url": "https://www.first.org/cvss/v4-0/specification-document",
+      "artifact": ".research/cvss40.html",
+      "description": "CVSS v4.0 metric names, vector syntax, nomenclature",
+      "bytes": 117993,
+      "sha256": "3d2e30dd6ac356f6316596fa0e0186faccf5f010f35bb131f3a7fc36a156bf63"
+    },
+    {
+      "url": "https://cwe.mitre.org/top25/archive/2025/2025_cwe_top25.html",
+      "artifact": ".research/cwe25.html",
+      "description": "CWE Top 25 (2025) ranked weaknesses",
+      "bytes": 41392,
+      "sha256": "49a375800fa9519129a7beda6233dab499addfbe7952bfaedb9051654d2ab0db"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/gitleaks/gitleaks/master/README.md",
+      "artifact": ".research/gitleaks.md",
+      "description": "gitleaks v8 subcommands (git/dir) + report formats",
+      "bytes": 29328,
+      "sha256": "65e87e68f4a16aefa1f1fba55b2e7a9b9bc8716393b7ddb013fc7c7bef4e4bc1"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/google/osv-scanner/main/README.md",
+      "artifact": ".research/osv.md",
+      "description": "osv-scanner v2 `scan source` topology",
+      "bytes": 11071,
+      "sha256": "ae9d6a52e41fea4dad413bf20ef6097cba581891e139e918484c38cad8fcb751"
+    },
+    {
+      "url": "https://semgrep.dev/docs/cli-reference",
+      "artifact": ".research/semgrep.html",
+      "description": "semgrep CLI flags (--json/--sarif/--config/--timeout)",
+      "bytes": 1186329,
+      "sha256": "9bddf2cfff5c065835ccf9f48dcedd8bfa2bfeb6a75aa12ce570c2d679e85db1"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/bridgecrewio/checkov/main/README.md",
+      "artifact": ".research/checkov.md",
+      "description": "checkov -d/-o sarif|json usage",
+      "bytes": 23255,
+      "sha256": "72b74fe733fc177fe97d40af4dea5faa5ff462d1acb08e6c2e76d95e75732452"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/FIRSTdotorg/cvss-v4-calculator/master/cvss_lookup.js",
+      "artifact": ".research/cvss40_cvss_lookup.js",
+      "description": "CVSS 4.0 macrovector lookup table (BSD-2-Clause)",
+      "bytes": 4638,
+      "sha256": "d533fe625d95e15b7b488a4bf93dab5f7df16b7e38b0c8ee01281d7b31a8165e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/FIRSTdotorg/cvss-v4-calculator/master/cvss_score.js",
+      "artifact": ".research/cvss40_cvss_score.js",
+      "description": "CVSS 4.0 base score algorithm (BSD-2-Clause)",
+      "bytes": 16097,
+      "sha256": "453ce6767b5c3939b51d1f21315f2649e47b5abeca674be287e94b524472a1bc"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/FIRSTdotorg/cvss-v4-calculator/master/max_composed.js",
+      "artifact": ".research/cvss40_max_composed.js",
+      "description": "CVSS 4.0 max-composed vector helper",
+      "bytes": 968,
+      "sha256": "be707cc82c17993a04a84e47b1a8aaa1d0d212b56852254659ce77fd7d959f63"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/FIRSTdotorg/cvss-v4-calculator/master/max_severity.js",
+      "artifact": ".research/cvss40_max_severity.js",
+      "description": "CVSS 4.0 max severity distance helper",
+      "bytes": 371,
+      "sha256": "f838ecb41bfd5114456e7fa7df8a8449ca2735c176867886fa34bd011dee0b24"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/FIRSTdotorg/cvss-v4-calculator/master/metrics.js",
+      "artifact": ".research/cvss40_metrics.js",
+      "description": "CVSS 4.0 metric value enumeration",
+      "bytes": 1263,
+      "sha256": "99ee2643587071bf744cd090c4bb2db58d523ed0276efd809871b00a12985a4c"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/FIRSTdotorg/cvss-v4-calculator/master/LICENSE",
+      "artifact": ".research/cvss40_LICENSE",
+      "description": "BSD-2-Clause license for the reference calculator",
+      "bytes": 1307,
+      "sha256": "5d672639189da9bda914dd8c847069cc6959135000b17c45262bb742e5d3b392"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/skills",
+      "artifact": ".research/claude-code-skills.html",
+      "description": "Claude Code skills documentation (frontmatter/description guidance, discovery, invocation)",
+      "bytes": 944433,
+      "sha256": "2fce60ed3231b294e96d01d8ede30f811c8ed0e2a7c62939dd16fb3d8b55b461"
+    },
+    {
+      "url": "https://owasp.org/www-project-web-security-testing-guide/",
+      "artifact": ".research/wstg.html",
+      "description": "OWASP Web Security Testing Guide project page (WSTG test-case structure)",
+      "bytes": 78541,
+      "sha256": "11a8278eaf2a61e7ffa91cb165704b31b9650d1d5c2271e82e081db07f298bf8"
+    },
+    {
+      "url": "https://cheatsheetseries.owasp.org/",
+      "artifact": ".research/cheatsheets.html",
+      "description": "OWASP Cheat Sheet Series index (canonical fix guidance per weakness)",
+      "bytes": 61989,
+      "sha256": "06e96628c18c4e4036830672ed389f342de6693e21c397825404bafe64ff1653"
+    },
+    {
+      "url": "https://owasp.org/www-project-proactive-controls/",
+      "artifact": ".research/proactive-controls.html",
+      "description": "OWASP Proactive Controls project page (controls mapped to development practice)",
+      "bytes": 60125,
+      "sha256": "4fb8550d8d51dcbc019a68ea5104f4950c69044e8aa0f2334cf526b7de7c300b"
+    },
+    {
+      "url": "https://owasp.org/www-project-samm/",
+      "artifact": ".research/samm.html",
+      "description": "OWASP SAMM project page (software assurance maturity framing)",
+      "bytes": 98429,
+      "sha256": "46fd96d23a66b31790891f09f752f461b90649fae6b67da236ba61c5f445a9f4"
+    },
+    {
+      "url": "https://owasp.org/www-project-software-component-verification-standard/",
+      "artifact": ".research/scvs.html",
+      "description": "OWASP SCVS project page (software component verification / provenance)",
+      "bytes": 68910,
+      "sha256": "d0a714797b910a3c99fb3e8a27af87bfa299dd9a5a90229f33e6e7bbf3a5d3c7"
+    },
+    {
+      "url": "https://csrc.nist.gov/pubs/sp/800/218/final",
+      "artifact": ".research/nist-800-218.html",
+      "description": "NIST SP 800-218 (SSDF) Version 1.1 final publication page",
+      "bytes": 48136,
+      "sha256": "10c9fa9b6294ce8432d50b3e8c90fff0e298a5addf779edff0aae326d4c66e5a"
+    },
+    {
+      "url": "https://capec.mitre.org/",
+      "artifact": ".research/capec.html",
+      "description": "MITRE CAPEC landing page (attack pattern enumeration, complements CWE)",
+      "bytes": 17391,
+      "sha256": "79f35ab36a486c09acfac8857361461abcbbe2ce9b83d474b205d0e66eddb022"
+    }
+  ]
+}
