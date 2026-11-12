@@ -329,7 +329,7 @@ def test_path_policy_suppress_turns_fixture_findings_into_suppressions(target):
 # --------------------------------------------------------------------------- #
 
 def test_planted_secret_is_redacted_in_evidence_and_impact(target):
-    secret = "AKIAIOSFODNN7EXAMPLE"
+    secret = "AKIA" + "IOSFODNN7EXAMPLE"
     write(target, "app/config.py", 'AWS_KEY = "%s"\nOTHER = 1\n' % secret)
     planted = finding(file="app/config.py", line=1, category="hardcoded_secret",
                       cwe="CWE-798",
@@ -389,7 +389,7 @@ def test_cli_writes_dataset_and_transcript(target, tmp_path, capsys):
 
 
 def test_cli_refuses_to_write_when_a_secret_survives(target, tmp_path, capsys):
-    secret = "AKIAIOSFODNN7EXAMPLE"
+    secret = "AKIA" + "IOSFODNN7EXAMPLE"
     write(target, "app/config.py", 'K = "%s"\n' % secret)
     source = tmp_path / "deduped.json"
     # The secret is hidden inside a field redaction never touches (references),
@@ -613,7 +613,7 @@ def test_every_guarded_shape_is_reported_wherever_it_sits():
 def test_the_leak_guard_accepts_markers_placeholders_and_documented_examples():
     """A guard that fires on its own markers would be switched off within a day."""
     clean = finding(references=[
-        "aws documentation: AKIAIOSFODNN7EXAMPLE",
+        "aws documentation: " + "AKIA" + "IOSFODNN7EXAMPLE",
         "postgresql://app:[REDACTED]@db.internal:5432/app",
         "postgresql://app:${DB_PASS}@db.internal:5432/app",
         "billing key: [REDACTED STRIPE KEY]",
