@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -114,12 +115,118 @@ def test_trust_boundaries_count_untrusted_sources(surface):
     assert trust["note"]
 
 
-def test_non_http_surfaces_are_classified(surface):
-    assert surface["non_http"], "the corpus has an /admin route worth a non-HTTP surface"
-    for entry in surface["non_http"]:
-        assert entry["kind"] in {"admin-interface", "queue-consumer", "websocket",
-                                 "rpc-handler", "graphql", "cli-entry"}
-        assert entry["file"] and entry["line"] > 0
+#: One genuine snippet per non-HTTP kind. The previous version of this test used
+#: the fixture corpus, which only ever "matched" because ``/admin`` appeared in a
+#: route string and in a CORS origin -- the exact phantom this stage now rejects.
+NON_HTTP_SAMPLES = {
+    "graphql": ("python", "type Query {\n  orders: [Order]\n}\n"),
+    "graphql-server": ("python", "schema = graphene.Schema(query=Query)\n"),
+    "graphql-resolver": ("python", "@Mutation()\ndef create_order(root, info):\n    ...\n"),
+    "websocket": ("javascript", "const server = new WebSocketServer({ port: 8080 });\n"),
+    "grpc-service": ("python", "def add_OrderServicer_to_server(servicer, server):\n"),
+    "rpc-handler": ("python", "@rpc.method()\ndef list_orders():\n    ...\n"),
+    "queue-consumer": ("python", "@celery_app.task\ndef send_receipt(order_id):\n"),
+    "scheduled-job": ("java", '@Scheduled(cron = "0 0 * * * *")\n'),
+    "cli-entry": ("python", 'if __name__ == "__main__":\n    main()\n'),
+    "file-watcher": ("javascript", "chokidar.watch('/etc');\n"),
+    "admin-interface": ("python", "admin.site.register(Order)\n"),
+}
+
+
+def test_non_http_surfaces_are_classified():
+    """Every kind is recognised from a mechanism, and reported with a location."""
+    for kind, (language, source) in NON_HTTP_SAMPLES.items():
+        found = asf.discover_non_http(source, language)
+        assert [hit["kind"] for hit in found] == [kind], (kind, found)
+        assert found[0]["line"] == 1, (kind, found)
+        assert found[0]["evidence"], kind
+
+
+def test_masked_view_preserves_offsets_and_line_numbers():
+    """Masking must be invisible to line arithmetic: evidence quotes the raw file."""
+    source = 'x = """doc"""\n# comment\nif __name__ == "__main__":\n    pass\n'
+    masked = asf.mask_non_code(source, "python")
+    assert len(masked) == len(source)
+    assert masked.count("\n") == source.count("\n")
+    assert "doc" not in masked and "comment" not in masked
+    assert "__name__" in masked
+    found = asf.discover_non_http(source, "python")
+    assert found[0]["line"] == 3
+    assert found[0]["evidence"].startswith("if __name__ ==")
+
+
+def test_docstrings_and_comments_do_not_create_surfaces():
+    """A file that *describes* a WebSocket server does not expose one."""
+    python = """
+""" + '"""' + """This module documents a WebSocketServer, an /admin panel and jsonrpc.""" + '"""' + """
+# new WebSocketServer({port: 80}); @celery_app.task admin.site.register(X)
+def unrelated():
+    return "new WebSocket() and @celery_app.task"
+"""
+    assert asf.discover_non_http(python, "python") == []
+
+    javascript = """
+// const server = new WebSocketServer({ port: 80 });
+/* chokidar.watch('/etc'); jsonrpc */
+const note = "new WebSocket() and @celery_app.task";
+"""
+    assert asf.discover_non_http(javascript, "javascript") == []
+
+
+def test_a_commented_out_guard_is_not_a_mechanism():
+    """The vulnerable fixture comments its decorator out -- that *is* the finding."""
+    commented = "def orders():\n    # @login_required\n    return list_orders()\n"
+    active = "def orders():\n    @login_required\n    return list_orders()\n"
+    assert asf.discover_auth(commented, "python") == []
+    assert [item["mechanism"] for item in asf.discover_auth(active, "python")] == ["login_required"]
+
+
+def test_string_bearing_mechanisms_are_still_found():
+    """Two rules read a literal on purpose; the code-only view must not blind them."""
+    php = ("<?php\n"
+           "Route::get('/orders', 'OrderController@index')->middleware('auth');\n"
+           "$user = $_SESSION['user'];\n")
+    mechanisms = {item["mechanism"] for item in asf.discover_auth(php, "php")}
+    assert {"laravel-middleware", "php-session-auth"} <= mechanisms
+
+
+def test_fixture_corpora_report_no_phantom_non_http_surfaces(surface, secure_surface):
+    """``/admin/promote`` is a route, not a non-HTTP surface; a CORS origin is not one either."""
+    for document in (surface, secure_surface):
+        assert document["non_http"] == []
+
+
+def test_one_surface_per_kind_per_file(tmp_path):
+    """A rule that fires on every call describes one mechanism, not N entry points."""
+    (tmp_path / "worker.py").write_text(
+        "@celery_app.task\ndef a():\n    ...\n\n"
+        "@celery_app.task\ndef b():\n    ...\n\n"
+        'if __name__ == "__main__":\n    a()\n\n'
+        'if __name__ == "__main__":\n    a()\n', encoding="utf-8")
+    document = asf.analyse(str(tmp_path))
+    assert document["summary"]["non_http_by_kind"] == {"cli-entry": 1, "queue-consumer": 1}
+    assert sorted(item["kind"] for item in document["non_http"]) == ["cli-entry", "queue-consumer"]
+
+
+def test_self_scan_invents_no_surfaces():
+    """The regression that started this: a pure-Python CLI repo has no web surface."""
+    document = asf.analyse(SCRIPTS)
+    kinds = {item["kind"] for item in document["non_http"]}
+    assert kinds <= {"cli-entry"}, sorted(kinds)
+    assert document["auth_mechanisms"] == []
+
+    # ... and the CLI entries it does report are the real ``__main__`` guards,
+    # exactly one per file, pinned to that guard's line.
+    guards = {}
+    for name in sorted(os.listdir(SCRIPTS)):
+        if not name.endswith(".py"):
+            continue
+        with open(os.path.join(SCRIPTS, name), encoding="utf-8") as handle:
+            for number, line in enumerate(handle, start=1):
+                if re.match(r"if\s+__name__\s*==", line):
+                    guards[name] = number
+    reported = {item["file"]: item["line"] for item in document["non_http"]}
+    assert reported == guards, (reported, guards)
 
 
 def test_undecomposable_frameworks_are_named_as_a_limitation(surface):

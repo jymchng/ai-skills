@@ -12,6 +12,12 @@ must not upgrade that into a vulnerability.
 
 Output is deterministic: entry points are sorted by (file, line, method, path).
 
+Precision note: auth and non-HTTP rules run against a *code-only view* of each
+file -- comments and string bodies blanked, offsets preserved -- so prose about
+a WebSocket server, a docstring mentioning ``/admin`` or this tool's own rule
+tables cannot invent a surface. One surface is reported per kind per file,
+because a pattern that fires on every call describes one mechanism.
+
 Read-only, stdlib only.
 
 Usage
@@ -157,6 +163,96 @@ def _http_method(raw: Optional[str]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Code-only view
+# --------------------------------------------------------------------------- #
+#: Per-language comment/string syntax. Anything unlisted is treated as C-like,
+#: which is right for JS, TS, Go, Java, C#, Kotlin, Rust and Protobuf.
+_LINE_COMMENTS: Dict[str, Tuple[str, ...]] = {
+    "python": ("#",), "ruby": ("#",), "graphql": ("#",), "yaml": ("#",),
+    "dockerfile": ("#",), "shell": ("#",), "bash": ("#",),
+    "php": ("//", "#"), "terraform": ("#", "//"),
+    "javascript": ("//",), "typescript": ("//",), "go": ("//",), "java": ("//",),
+    "csharp": ("//",), "kotlin": ("//",), "rust": ("//",), "swift": ("//",),
+    "c": ("//",), "cpp": ("//",), "protobuf": ("//",),
+}
+#: Languages with no ``/* ... */`` form (or where it is not a comment).
+_NO_BLOCK_COMMENT = frozenset({"python", "ruby", "graphql", "yaml", "dockerfile",
+                               "shell", "bash", "text", "markdown", "json"})
+#: Languages that also use the backtick as a string delimiter.
+_BACKTICK_LANGS = frozenset({"javascript", "typescript", "go", "terraform", "shell"})
+
+
+def _syntax(language: str) -> Tuple[Tuple[str, ...], Optional[Tuple[str, str]], str]:
+    name = (language or "").lower()
+    line = _LINE_COMMENTS.get(name, ("//",))
+    block = None if name in _NO_BLOCK_COMMENT else ("/*", "*/")
+    quotes = "'\"" + ("`" if name in _BACKTICK_LANGS else "")
+    return line, block, quotes
+
+
+def mask_non_code(text: str, language: str, keep_strings: bool = False) -> str:
+    """Return ``text`` with comments (and string bodies, unless kept) blanked.
+
+    Offsets and line numbers are preserved, so every match found in the masked
+    view can be reported against the original file. Two precision problems die
+    here: a docstring that *describes* a WebSocket server is not a WebSocket
+    server, and the rule tables in this very file (which contain the patterns
+    as literals) stop matching themselves. Without this, a self-scan of a
+    pure-Python CLI repository invented 126 non-HTTP surfaces.
+
+    ``keep_strings`` exists for the few rules whose evidence genuinely lives in
+    a literal -- ``->middleware('auth')``, ``$_SESSION['user']`` -- where the
+    code-only view would blank the only thing worth matching.
+    """
+    line_markers, block_pair, quotes = _syntax(language)
+    out = list(text)
+    length = len(text)
+    index = 0
+
+    def blank(start: int, end: int) -> None:
+        for position in range(start, min(end, length)):
+            if text[position] != "\n":
+                out[position] = " "
+
+    while index < length:
+        char = text[index]
+        matched_marker = None
+        for marker in line_markers:
+            if text.startswith(marker, index):
+                matched_marker = marker
+                break
+        if matched_marker is not None:
+            newline = text.find("\n", index)
+            end = length if newline < 0 else newline
+            blank(index, end)
+            index = end
+            continue
+        if block_pair and text.startswith(block_pair[0], index):
+            closing = text.find(block_pair[1], index + len(block_pair[0]))
+            end = length if closing < 0 else closing + len(block_pair[1])
+            blank(index, end)
+            index = end
+            continue
+        if char in quotes:
+            delimiter = char * 3 if text.startswith(char * 3, index) else char
+            cursor = index + len(delimiter)
+            while cursor < length:
+                if text[cursor] == "\\":
+                    cursor += 2
+                    continue
+                if text.startswith(delimiter, cursor):
+                    cursor += len(delimiter)
+                    break
+                cursor += 1
+            if not keep_strings:
+                blank(index + len(delimiter), cursor - len(delimiter))
+            index = cursor
+            continue
+        index += 1
+    return "".join(out)
+
+
+# --------------------------------------------------------------------------- #
 # Authentication / authorisation mechanisms
 # --------------------------------------------------------------------------- #
 #: (mechanism name, languages, regex, scope-kind). Scope kinds:
@@ -242,7 +338,15 @@ AUTH_RULES: Tuple[Tuple[str, Tuple[str, ...], str, str], ...] = (
      r"""\b(?:User\s*\.\s*Identity|IsAuthenticated)\b""", "inline"),
 )
 
+#: Rules whose evidence lives inside a string literal. Everything else is
+#: matched against the code-only view, so a docstring cannot raise a mechanism.
+AUTH_STRING_RULES = frozenset({"laravel-middleware", "php-session-auth"})
+
 #: Non-HTTP surface. Each is a trust boundary even without a URL.
+#: Every rule must name a *mechanism* -- a call, decorator, class, guard or
+#: registration -- and never a bare word. The code-only view removes comments
+#: and string bodies; these anchors remove the remaining prose, so a file that
+#: merely documents ``jsonrpc`` or ``/admin`` is not a surface.
 NON_HTTP_RULES: Tuple[Tuple[str, Tuple[str, ...], str], ...] = (
     ("graphql", ("python", "javascript", "typescript", "ruby", "java", "csharp", "php", "go",
                  "graphql"),
@@ -256,17 +360,17 @@ NON_HTTP_RULES: Tuple[Tuple[str, Tuple[str, ...], str], ...] = (
     ("grpc-service", ("python", "go", "java", "csharp", "ruby", "php", "protobuf"),
      r"""\brpc\s+\w+\s*\(\s*\w*\s*\)\s*returns|\b(?:add_\w+Servicer_to_server|Register\w+Server|@GrpcMethod|Grpc\.Core)\b"""),
     ("rpc-handler", ("javascript", "typescript", "python"),
-     r"""\b(?:rpc|RPCMethod|@rpc\.method|jsonrpc)\b"""),
+     r"""@rpc\s*\.\s*method\b|\bjsonrpc\b|\brpc\.(?:register|handle|expose)\s*\(|\bRPCMethod\b"""),
     ("queue-consumer", ("python", "javascript", "typescript", "ruby", "java", "csharp", "go", "php"),
-     r"""@(?:app|celery|shared)_?task\b|\b(?:Celery|@RabbitListener|@KafkaListener|IHostedService|Sidekiq::Worker|new\s+Queue|Worker\s*\(|@Processor\s*\(|bullmq|asynq)\b"""),
+     r"""@\s*[\w$.]*(?:task|Task|consumer|Consumer)\b|\b(?:Celery|@RabbitListener|@KafkaListener|IHostedService|Sidekiq::Worker|new\s+Queue|Worker\s*\(|@Processor\s*\(|bullmq|asynq)\b"""),
     ("scheduled-job", ("python", "javascript", "typescript", "java", "ruby", "csharp"),
      r"""@Scheduled\s*\(|\bcron\.schedule\s*\(|@periodic_task|schedule\.every\s*\(|BackgroundJob\.|crontab\b"""),
     ("cli-entry", ("python", "javascript", "typescript", "go", "ruby", "php", "java", "csharp"),
-     r"""if\s+__name__\s*==\s*['"]__main__['"]|\b(?:commander|cobra\.Command|clap::|argparse|click\.command|thor)\b"""),
+     r"""if\s+__name__\s*==\s*|\b(?:commander|cobra\.Command|clap::|click\.command|thor)\b"""),
     ("file-watcher", ("python", "javascript", "typescript", "go"),
      r"""\b(?:watchdog|chokidar|fs\.watch|fsnotify)\b"""),
     ("admin-interface", ("python", "ruby", "php", "java"),
-     r"""\badmin\.site\.register|ActiveAdmin\.register|\bAdmin::|/admin\b"""),
+     r"""\badmin\.site\.register\b|\bActiveAdmin\.register\b|\bAdmin::[A-Z]\w*"""),
 )
 
 #: Candidate untrusted-input sources, used to describe trust boundaries.
@@ -481,8 +585,18 @@ def discover_routes(text: str, rel: str, language: str) -> List[Dict[str, Any]]:
     return hits
 
 
+def _evidence_line(text: str, index: int, limit: int = 120) -> str:
+    """The original line at ``index``, trimmed for a report."""
+    start = text.rfind("\n", 0, index) + 1
+    end = text.find("\n", index)
+    line = text[start:end if end >= 0 else len(text)]
+    return line.strip()[:limit]
+
+
 def discover_auth(text: str, language: str) -> List[Dict[str, Any]]:
     found: List[Dict[str, Any]] = []
+    code = mask_non_code(text, language)
+    with_strings = mask_non_code(text, language, keep_strings=True)
     for name, languages, pattern, scope in AUTH_RULES:
         if language not in languages:
             continue
@@ -490,7 +604,8 @@ def discover_auth(text: str, language: str) -> List[Dict[str, Any]]:
             compiled = re.compile(pattern, re.MULTILINE)
         except re.error:
             continue
-        for match in compiled.finditer(text):
+        view = with_strings if name in AUTH_STRING_RULES else code
+        for match in compiled.finditer(view):
             detail = None
             for group in match.groups():
                 if group:
@@ -507,6 +622,7 @@ def discover_auth(text: str, language: str) -> List[Dict[str, Any]]:
 
 def discover_non_http(text: str, language: str) -> List[Dict[str, Any]]:
     found: List[Dict[str, Any]] = []
+    code = mask_non_code(text, language)
     for kind, languages, pattern in NON_HTTP_RULES:
         if language not in languages:
             continue
@@ -514,9 +630,9 @@ def discover_non_http(text: str, language: str) -> List[Dict[str, Any]]:
             compiled = re.compile(pattern, re.MULTILINE)
         except re.error:
             continue
-        for match in compiled.finditer(text):
+        for match in compiled.finditer(code):
             found.append({"kind": kind, "line": _line_of(text, match.start()),
-                          "evidence": match.group(0)[:120].replace("\n", " ").strip()})
+                          "evidence": _evidence_line(text, match.start())})
     return found
 
 
@@ -727,7 +843,13 @@ def analyse(root: str, inventory_doc: Optional[Dict[str, Any]] = None,
                 },
             })
 
+        # One surface per kind per file. A rule that fires on every call
+        # describes one mechanism, not N entry points: 84 ``argparse`` tokens
+        # were 16 CLI tools.
+        seen_non_http: Dict[str, Dict[str, Any]] = {}
         for item in discover_non_http(text, language):
+            seen_non_http.setdefault(item["kind"], item)
+        for item in seen_non_http.values():
             non_http.append({"file": rel, "language": language, **item})
 
         for label, lines in discover_sources(text).items():
