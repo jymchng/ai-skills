@@ -808,13 +808,9 @@ GUARDS: Dict[str, Tuple[str, ...]] = {
 }
 
 #: Values that look like secrets but are not: placeholders in templates, empty
-#: strings, environment references and obvious dummies.
-SECRET_PLACEHOLDER_RE = re.compile(
-    r"^(?:|x{3,}|X{3,}|\*{3,}|\.{3,}|changeme|change[_-]?me|placeholder|example|sample|dummy|"
-    r"test|secret|password|passwd|your[_-]?\w*|todo|fixme|null|none|true|false|"
-    r"[\$\{\}<>%\s]+|\$\{?\w+\}?|\{\{\s*\w+\s*\}\})$",
-    re.IGNORECASE,
-)
+#: strings, environment references and obvious dummies. Defined once, in
+#: :mod:`finding_model`, so every stage that redacts agrees on what is safe.
+SECRET_PLACEHOLDER_RE = fm.SECRET_PLACEHOLDER_RE
 
 
 # --------------------------------------------------------------------------- #
@@ -1619,6 +1615,41 @@ def _line_of(starts: Sequence[int], offset: int) -> int:
     return bisect.bisect_right(starts, offset)
 
 
+def _shape_replacement(match: Any) -> str:
+    """Replace one captured credential with a prefix-and-length marker.
+
+    The analyzer's patterns either name the value (``?P<secret>``) or match the
+    value as a whole, so ``password = "…"`` keeps its assignment and loses only
+    the literal. Placeholders and markers are left alone.
+    """
+    named = match.groupdict().get("secret")
+    value = (named if named is not None else match.group(0)).strip().strip("'\"")
+    if not value or fm.is_placeholder(value) or "[REDACTED" in value or "\u2026" in value:
+        return match.group(0)
+    marker = fm.redact_value(value)
+    return match.group(0).replace(value, marker) if named is not None else marker
+
+
+def redact_shapes(text: str) -> str:
+    """Replace every credential shape in *text* with a safe marker.
+
+    Redacting only the value a rule matched is not enough for evidence: an
+    excerpt quotes the neighbouring line too, so a token sitting beside an
+    unrelated finding would otherwise be published with it. Every shape the
+    secret pass can detect is swept, because those are exactly the shapes that
+    can turn up in an excerpt.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    for _secret_id, pattern_text, _label in SECRET_PATTERNS:
+        try:
+            compiled = re.compile(pattern_text)
+        except re.error:
+            continue
+        text = compiled.sub(_shape_replacement, text)
+    return text
+
+
 def _evidence(lines: Sequence[str], line_no: int, *, redact: Optional[Iterable[str]] = None,
               span: int = 1) -> str:
     """Numbered excerpt around ``line_no``; secrets are replaced before it is built."""
@@ -1633,7 +1664,7 @@ def _evidence(lines: Sequence[str], line_no: int, *, redact: Optional[Iterable[s
     excerpt = "\n".join(parts[:MAX_EVIDENCE_LINES])
     if redact:
         excerpt, _ = fm.redact_text(excerpt, redact)
-    return excerpt[:MAX_EVIDENCE_CHARS]
+    return redact_shapes(excerpt)[:MAX_EVIDENCE_CHARS]
 
 
 def _tainted_names(text: str) -> Set[str]:
@@ -1776,7 +1807,7 @@ def build_finding(rule: Dict[str, Any], *, file: str, line_start: int, line_end:
         "scoring": "unscored",
         "location": {"file": file, "line_start": int(line_start), "line_end": int(line_end)},
         "language": language or "unknown",
-        "evidence": evidence,
+        "evidence": redact_shapes(evidence),
         "description": description,
         "impact": meta["impact"],
         "attack_scenario": meta["scenario"],

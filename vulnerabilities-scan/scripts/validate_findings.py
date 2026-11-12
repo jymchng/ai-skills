@@ -693,38 +693,10 @@ def priority_for(severity: str, confidence: str, in_test_path: bool,
 # --------------------------------------------------------------------------- #
 
 #: A value that is already a marker or an unfilled template hole rather than a
-#: literal secret. Rewriting one of these would erase the guidance that put it
-#: there, and re-redacting a report would rewrite its own markers.
-_ALREADY_SAFE_RE = re.compile(
-    r"^(?:<[^<>]*>|\[REDACTED[^\]]*\]|\*{2,}|x{2,}|\.{2,}|-{2,}|_{2,})$", re.IGNORECASE)
-
-_PLACEHOLDER_TOKENS: Tuple[str, ...] = (
-    "${", "{{", "os.environ", "process.env", "getenv", "%s", "[REDACTED",
-)
-
-#: Words that describe a credential instead of being one. A phrase built only
-#: from these (``your-api-key-here``, ``insert_token_here``) is documentation: the
-#: anchored placeholder regex above cannot see a hyphen-joined phrase, and
-#: redacting one would delete the instruction the template is giving.
-_PLACEHOLDER_WORDS = frozenset({
-    "a", "an", "the", "your", "my", "our", "insert", "add", "put", "here",
-    "api", "key", "apikey", "secret", "token", "password", "passwd", "pwd",
-    "value", "placeholder", "example", "sample", "dummy", "test", "fake",
-    "change", "changeme", "me", "foo", "bar", "xxx", "xxxx",
-})
-
-
-def _is_placeholder(value: Any) -> bool:
-    """True when *value* is not a literal secret but a marker or a template hole."""
-    text = str(value or "").strip().strip("'\"")
-    if not text:
-        return True
-    if ba.SECRET_PLACEHOLDER_RE.match(text) or _ALREADY_SAFE_RE.match(text):
-        return True
-    if any(token in text for token in _PLACEHOLDER_TOKENS):
-        return True
-    words = [word for word in re.split(r"[^a-z0-9]+", text.lower()) if word]
-    return len(words) > 1 and all(word in _PLACEHOLDER_WORDS for word in words)
+#: literal secret. The predicate itself lives in :mod:`finding_model`, because the
+#: analyzer, the orchestrator and this stage all redact text and must agree on
+#: what "already safe" means; a fourth copy of the rule is how they drift apart.
+_is_placeholder = fm.is_placeholder
 
 
 def _labelled_assignment_replacement(match: Any) -> str:
@@ -1045,8 +1017,8 @@ def validate_dataset(root: str, dataset: Dict[str, Any], *, secrets: Sequence[st
 
         finding["confidence"] = confidence
         finding["validation_status"] = status
-        finding["evidence"] = evidence or ("(evidence unavailable: %s)"
-                                           % (evidence_problem or "unreadable"))
+        finding["evidence"] = evidence or redact_text(
+            "(evidence unavailable: %s)" % (evidence_problem or "unreadable"))[0]
         finding["in_test_path"] = in_test_path
         finding.setdefault("language", "unknown")
 

@@ -373,3 +373,60 @@ def test_document_findings_conform_to_the_schema(workdir):
     assert problems == []
     assert document["findings"][0]["validation_status"] == "unvalidated"
     assert "docs" in document["coverage"]["buckets_scanned"]
+
+
+# ---------------------------------------------------------------------------
+# a secret beside an unrelated finding
+#
+# Evidence quotes a ±1 window, so the neighbouring line is published with the
+# finding. Redacting only the value a rule matched left a credential sitting on
+# that neighbour in the excerpt, and it travelled into analysis.json, the
+# deduplicated dataset and every report.
+# ---------------------------------------------------------------------------
+
+def test_a_secret_beside_an_unrelated_finding_is_redacted_from_its_evidence(workdir):
+    stripe = "sk_live_" + "Z" * 24
+    root = os.path.join(workdir, "repo")
+    write(root, "app/orders.py",
+          "from flask import request\n"
+          "def handler(request):\n"
+          "    # billing key: " + stripe + "\n"
+          "    return db.execute(\"SELECT * FROM orders WHERE id=\" + request.args['id'])\n")
+
+    document = ba.analyze(root)
+    sql = [f for f in document["findings"] if f["category"] == "sql_injection"]
+    assert len(sql) == 1, [f["category"] for f in document["findings"]]
+    evidence = sql[0]["evidence"]
+
+    assert stripe not in json.dumps(document), "the raw key reached the analysis document"
+    assert stripe not in evidence
+    # the marker, not a blank: a reader still sees that something was redacted
+    assert "sk_l\u2026(32 chars)" in evidence, evidence
+    # and the finding itself is still readable
+    assert "SELECT * FROM orders WHERE id=" in evidence
+
+    # the secret finding quotes its own window, centred one line earlier
+    secret_finding = [f for f in document["findings"] if f["category"] == "hardcoded_secret"][0]
+    assert stripe not in secret_finding["evidence"]
+    assert "sk_l\u2026(32 chars)" in secret_finding["evidence"]
+
+
+def test_build_finding_redacts_whatever_evidence_it_is_handed():
+    """Defence in depth: a caller that quotes its own excerpt cannot leak one."""
+    stripe = "sk_live_" + "Z" * 24
+    rule = {"category": "sql_injection", "title": "t", "severity": "High",
+            "confidence": "MEDIUM", "guards": [], "extra_references": [], "id": "r1"}
+    record = ba.build_finding(rule, file="app/q.py", line_start=2, line_end=2,
+                              evidence="    2 | key = " + stripe, language="python")
+    assert stripe not in record["evidence"]
+    assert "sk_l\u2026(32 chars)" in record["evidence"]
+
+
+def test_redact_shapes_leaves_placeholders_and_markers_alone():
+    assert ba.redact_shapes('api_key = "your-api-key-here"') == 'api_key = "your-api-key-here"'
+    marker = "    3 | billing: sk_l\u2026(32 chars)"
+    assert ba.redact_shapes(marker) == marker
+    assert ba.redact_shapes("password = \"${DB_PASS}\"") == "password = \"${DB_PASS}\""
+    # and a real value in the same shape is still redacted
+    stripe = "sk_live_" + "Z" * 24
+    assert stripe not in ba.redact_shapes("key: " + stripe)

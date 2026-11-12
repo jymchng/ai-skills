@@ -428,6 +428,52 @@ _REDACTABLE_FIELDS: Tuple[str, ...] = (
 )
 
 
+#: Values that look like secrets but are not: placeholders in templates, empty
+#: strings, environment references and obvious dummies. Lives here rather than in
+#: the analyzers because three stages redact text and all of them must agree on
+#: what "already safe" means.
+SECRET_PLACEHOLDER_RE = re.compile(
+    r"^(?:|x{3,}|X{3,}|\*{3,}|\.{3,}|changeme|change[_-]?me|placeholder|example|sample|dummy|"
+    r"test|secret|password|passwd|your[_-]?\w*|todo|fixme|null|none|true|false|"
+    r"[\$\{\}<>%\s]+|\$\{?\w+\}?|\{\{\s*\w+\s*\}\})$",
+    re.IGNORECASE,
+)
+
+#: A value that is already a marker or an unfilled template hole rather than a
+#: literal secret. Rewriting one of these would erase the guidance that put it
+#: there, and re-redacting a report would rewrite its own markers.
+ALREADY_SAFE_RE = re.compile(
+    r"^(?:<[^<>]*>|\[REDACTED[^\]]*\]|\*{2,}|x{2,}|\.{2,}|-{2,}|_{2,})$", re.IGNORECASE)
+
+PLACEHOLDER_TOKENS: Tuple[str, ...] = (
+    "${", "{{", "os.environ", "process.env", "getenv", "%s", "[REDACTED",
+)
+
+#: Words that describe a credential instead of being one. A phrase built only
+#: from these (``your-api-key-here``, ``insert_token_here``) is documentation: the
+#: anchored regex above cannot see a hyphen-joined phrase, and redacting one would
+#: delete the instruction the template is giving.
+PLACEHOLDER_WORDS = frozenset({
+    "a", "an", "the", "your", "my", "our", "insert", "add", "put", "here",
+    "api", "key", "apikey", "secret", "token", "password", "passwd", "pwd",
+    "value", "placeholder", "example", "sample", "dummy", "test", "fake",
+    "change", "changeme", "me", "foo", "bar", "xxx", "xxxx",
+})
+
+
+def is_placeholder(value: Any) -> bool:
+    """True when *value* is not a literal secret but a marker or a template hole."""
+    text = str(value or "").strip().strip("'\"")
+    if not text:
+        return True
+    if SECRET_PLACEHOLDER_RE.match(text) or ALREADY_SAFE_RE.match(text):
+        return True
+    if any(token in text for token in PLACEHOLDER_TOKENS):
+        return True
+    words = [word for word in re.split(r"[^a-z0-9]+", text.lower()) if word]
+    return len(words) > 1 and all(word in PLACEHOLDER_WORDS for word in words)
+
+
 def redact_finding(finding: Dict[str, Any], secrets: Iterable[str]) -> Tuple[Dict[str, Any], int]:
     """Redact secrets from a finding's free-text fields. Returns (finding, count).
 

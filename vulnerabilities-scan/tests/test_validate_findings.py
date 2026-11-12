@@ -638,3 +638,80 @@ def test_the_leak_guard_needs_no_secrets_file(target, tmp_path, capsys):
     assert vf.main([str(source), "--root", target, "--out", str(out)]) == 1
     assert not out.exists(), "a dataset with a live-shaped key must not be written"
     assert "Stripe key" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# A secret beside an unrelated finding
+#
+# Evidence quotes a ±1 window, so a credential on the neighbouring line is part
+# of the excerpt of a finding that has nothing to do with it. It must be
+# redacted there too, or it reaches findings.json and every report through a
+# finding nobody would look at for a secret.
+# --------------------------------------------------------------------------- #
+
+def test_a_missing_snapshot_does_not_reuse_the_scanners_unredacted_evidence(target):
+    """The fallback path must not fall back to the scanner's raw excerpt."""
+    stripe = "sk_live_" + "Z" * 24
+    planted = finding(file="app/gone.py", line=3,
+                      evidence="    3 | billing key: " + stripe)
+    result, _ = validate(target, [planted])
+    record = result["findings"][0]
+
+    assert stripe not in json.dumps(result)
+    assert "evidence unavailable" in record["evidence"], record["evidence"]
+
+
+def test_an_adjacent_secret_never_reaches_any_deliverable(target, tmp_path):
+    """SQL injection at line 4, a Stripe key at line 3: no format may show it."""
+    import builtin_analyzers as ba
+    import deduplicate_findings as df
+    import generate_reports as gr
+
+    stripe = "sk_live_" + "Z" * 24
+    write(target, "app/orders.py",
+          "from flask import request\n"
+          "def handler(request):\n"
+          "    # billing key: " + stripe + "\n"
+          "    return db.execute(\"SELECT * FROM orders WHERE id=\" + request.args['id'])\n")
+
+    analysis = tmp_path / "analysis.json"
+    analysis.write_text(json.dumps(ba.analyze(target)))
+    # The stage-3 document is itself a deliverable a reader may open.
+    assert stripe not in analysis.read_text()
+
+    deduped = tmp_path / "deduped.json"
+    deduped.write_text(json.dumps(df.deduplicate(json.loads(analysis.read_text()))))
+    validated = tmp_path / "findings.json"
+    assert vf.main([str(deduped), "--root", target, "--out", str(validated)]) == 0
+    payload = validated.read_text()
+    assert stripe not in payload
+
+    sql = [f for f in json.loads(payload)["findings"] if f["category"] == "sql_injection"]
+    assert sql, "the corpus should produce the SQL injection finding"
+    assert "SELECT * FROM orders WHERE id=" in sql[0]["evidence"], sql[0]["evidence"]
+
+    formats = "markdown,html,json"
+    for tool in ("pandoc", "xelatex"):
+        if not shutil.which(tool):
+            break
+    else:
+        formats += ",pdf"
+
+    outdir = tmp_path / "report"
+    assert gr.main(["--dataset", str(validated), "--outdir", str(outdir),
+                    "--formats", formats]) == 0
+
+    written = [p for p in outdir.rglob("*") if p.is_file()
+               and p.suffix in (".md", ".html", ".json", ".pdf")]
+    assert written
+    for path in written:
+        if path.suffix == ".pdf":
+            text = subprocess.run(["pdftotext", str(path), "-"],
+                                  capture_output=True, text=True, check=True).stdout
+        else:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        assert stripe not in text, path
+    rendered = "\n".join(p.read_text(encoding="utf-8", errors="replace")
+                         for p in written if p.suffix in (".md", ".html", ".json"))
+    assert "sk_l\u2026(32 chars)" in rendered or "REDACTED" in rendered, \
+        "the report should show a marker, not silently drop the line"

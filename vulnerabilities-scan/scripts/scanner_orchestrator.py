@@ -486,9 +486,53 @@ _SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), "[REDACTED API KEY]"),
     (re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
      "[REDACTED JWT]"),
-    (re.compile(r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)\b\s*[=:]\s*['\"]?[^\s'\"<>,;)]{6,}"),
+    (re.compile(r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)\b\s*[=:]"
+                r"\s*['\"]?[^\s'\"<>,;)]{6,}"),
      lambda m: "%s=[REDACTED]" % m.group(1)),
 ]
+
+#: The credential shapes the built-in analyzer detects. An external tool's report
+#: quotes a ±1 window, so a credential on the neighbouring line is part of the
+#: excerpt; redacting only the shapes listed above would publish a Stripe key that
+#: sat beside an unrelated semgrep finding. Compiled from the analyzer's own table
+#: so the two cannot drift the way the validator's table once did.
+_SHAPE_CACHE: Optional[List[Tuple[re.Pattern, str]]] = None
+
+
+def _analyzer_shapes() -> List[Tuple[re.Pattern, str]]:
+    """The analyzer's credential shapes, compiled once, in this module's style.
+
+    Imported lazily so ``--list-tools`` does not pay for the analyzer import, and
+    taken from the analyzer's own table so the two cannot drift the way the
+    validator's table once did.
+    """
+    global _SHAPE_CACHE
+    if _SHAPE_CACHE is None:
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import builtin_analyzers as ba  # noqa: WPS433 - deliberate local import
+        _SHAPE_CACHE = [(re.compile(pattern_text), "[REDACTED %s]" % label.upper())
+                        for _secret_id, pattern_text, label in ba.SECRET_PATTERNS]
+    return _SHAPE_CACHE
+
+
+def _substitute_guarded(pattern: re.Pattern, replacement: Any,
+                        text: str) -> Tuple[str, int]:
+    """``pattern.subn`` that leaves placeholders and existing markers alone."""
+    hits = 0
+
+    def substitute(match: Any) -> str:
+        nonlocal hits
+        value = (match.groupdict().get("secret") or match.group(0)).strip().strip("'\"")
+        if not value or "\u2026" in value or "[REDACTED" in value:
+            return match.group(0)
+        new = replacement(match) if callable(replacement) else match.expand(replacement)
+        if new != match.group(0):
+            hits += 1
+        return new
+
+    return pattern.sub(substitute, text), hits
 
 
 def redact(text: str) -> Tuple[str, int]:
@@ -496,8 +540,8 @@ def redact(text: str) -> Tuple[str, int]:
     if not text:
         return text, 0
     total = 0
-    for pattern, replacement in _SECRET_PATTERNS:
-        text, count = pattern.subn(replacement, text)
+    for pattern, replacement in _SECRET_PATTERNS + _analyzer_shapes():
+        text, count = _substitute_guarded(pattern, replacement, text)
         total += count
     return text, total
 
