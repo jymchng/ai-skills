@@ -410,3 +410,104 @@ def test_control_catalogue_matches_the_stage_three_vocabulary():
         labels = " ".join(c.label for c in vf.CONTROLS[category])
         assert labels.strip()
         assert category in ba.GUARDS
+
+
+# --------------------------------------------------------------------------- #
+# Redaction parity with the analyzers
+#
+# capture_evidence re-quotes the audited file, so any credential shape the
+# analyzer can detect must also be redactable here. When a Stripe key was missing
+# from this table, stage 5 restored the value the analyzer had already redacted
+# and the reports printed it in full.
+# --------------------------------------------------------------------------- #
+
+#: ``secret id -> (text containing the secret, the part that must not survive)``.
+#: Every id in ``builtin_analyzers.SECRET_PATTERNS`` needs an entry; the coverage
+#: assertion below turns a new analyzer pattern into a test failure instead of a
+#: silent redaction gap.
+SECRET_SAMPLES = {
+    "aws-access-key": ("AKIA" + "Q" * 16, "AKIA" + "Q" * 16),
+    "private-key-block": ("-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----",
+                          "MIIEow"),
+    "github-token": ("ghp_" + "Ab1" * 12, "ghp_" + "Ab1" * 12),
+    "slack-token": ("xoxb-" + "1234567890-abcdefghijkl", "1234567890-abcdefghijkl"),
+    "stripe-key": ("sk_live_" + "Z" * 24, "sk_live_" + "Z" * 24),
+    "google-api-key": ("AIza" + "A" * 35, "AIza" + "A" * 35),
+    "jwt-token": ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0." + "x" * 43, "x" * 43),
+    "generic-assignment": ('client_secret = "abc123def456"', "abc123def456"),
+    "connection-string": ("postgresql://app:S3cretPassw0rd@db.internal:5432/app",
+                          "S3cretPassw0rd"),
+}
+
+
+def test_every_analyzer_secret_shape_is_also_redactable_here():
+    import builtin_analyzers as ba
+
+    analyzer_ids = {secret_id for secret_id, _pattern, _label in ba.SECRET_PATTERNS}
+    assert analyzer_ids == set(SECRET_SAMPLES), analyzer_ids ^ set(SECRET_SAMPLES)
+
+    for secret_id, (text, sensitive) in SECRET_SAMPLES.items():
+        redacted, count = vf.redact_text("  4 | " + text)
+        assert count >= 1, secret_id
+        assert sensitive not in redacted, (secret_id, redacted)
+        assert "[REDACTED" in redacted, (secret_id, redacted)
+
+
+def test_redaction_is_idempotent_and_leaves_placeholders_alone():
+    text = 'api_key = "your-api-key-here"'
+    assert vf.redact_text(text) == (text, 0)
+
+    once, count = vf.redact_text(" 4 | key = " + "sk_live_" + "Z" * 24)
+    twice, again = vf.redact_text(once)
+    assert count == 1 and again == 0
+    assert once == twice
+
+
+def test_capture_evidence_never_restores_a_redacted_secret(target):
+    """The evidence is re-read from disk: that copy must be redacted too."""
+    secret = "sk_live_" + "Z" * 24
+    write(target, "docs/keys.md", "# Keys\n\nbilling key: " + secret + "\n")
+    with open(os.path.join(target, "docs/keys.md"), encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+
+    evidence, problem = vf.capture_evidence(
+        lines, {"file": "docs/keys.md", "line_start": 3, "line_end": 3})
+    assert problem is None
+    assert secret not in evidence
+    assert "[REDACTED STRIPE KEY]" in evidence
+
+
+def test_a_document_secret_never_reaches_a_deliverable(target, tmp_path):
+    """The end-to-end guarantee: no format prints the value stage 3 redacted."""
+    import builtin_analyzers as ba
+    import deduplicate_findings as df
+    import generate_reports as gr
+
+    stripe = "sk_live_" + "Z" * 24
+    aws = "AKIA" + "Q" * 16
+    write(target, "README.md", "# Service\n\nDeploy key: " + stripe + "\n")
+    write(target, "notes.txt", "aws: " + aws + "\n")
+    write(target, "app/config.py", "AWS = '" + aws + "'\n")
+    write(target, "app/query.py",
+          "from flask import request\n\n\ndef handler(request):\n"
+          "    return db.execute(\"SELECT * FROM t WHERE id=\" + request.args['id'])\n")
+
+    analysis = tmp_path / "analysis.json"
+    analysis.write_text(json.dumps(ba.analyze(target)))
+    deduped = tmp_path / "deduped.json"
+    deduped.write_text(json.dumps(df.deduplicate(json.loads(analysis.read_text()))))
+    validated = tmp_path / "findings.json"
+    assert vf.main([str(deduped), "--root", target, "--out", str(validated)]) == 0
+
+    outdir = tmp_path / "report"
+    assert gr.main(["--dataset", str(validated), "--outdir", str(outdir),
+                    "--formats", "markdown,html,json"]) == 0
+
+    written = [p for p in outdir.rglob("*") if p.suffix in (".md", ".html", ".json")]
+    assert written, "no report files were written"
+    for path in written:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        assert stripe not in text, path
+        assert aws not in text, path
+    assert any("[REDACTED" in p.read_text(encoding="utf-8", errors="replace")
+               for p in written), "redaction markers should be visible"

@@ -66,6 +66,7 @@ if _SCRIPTS not in sys.path:
     sys.path.insert(0, _SCRIPTS)
 
 import cvss4  # noqa: E402
+import builtin_analyzers as ba  # noqa: E402
 import finding_model as fm  # noqa: E402
 
 VERSION = "1.0"
@@ -691,25 +692,130 @@ def priority_for(severity: str, confidence: str, in_test_path: bool,
 # Redaction
 # --------------------------------------------------------------------------- #
 
+#: A value that is already a marker or an unfilled template hole rather than a
+#: literal secret. Rewriting one of these would erase the guidance that put it
+#: there, and re-redacting a report would rewrite its own markers.
+_ALREADY_SAFE_RE = re.compile(
+    r"^(?:<[^<>]*>|\[REDACTED[^\]]*\]|\*{2,}|x{2,}|\.{2,}|-{2,}|_{2,})$", re.IGNORECASE)
+
+_PLACEHOLDER_TOKENS: Tuple[str, ...] = (
+    "${", "{{", "os.environ", "process.env", "getenv", "%s", "[REDACTED",
+)
+
+#: Words that describe a credential instead of being one. A phrase built only
+#: from these (``your-api-key-here``, ``insert_token_here``) is documentation: the
+#: anchored placeholder regex above cannot see a hyphen-joined phrase, and
+#: redacting one would delete the instruction the template is giving.
+_PLACEHOLDER_WORDS = frozenset({
+    "a", "an", "the", "your", "my", "our", "insert", "add", "put", "here",
+    "api", "key", "apikey", "secret", "token", "password", "passwd", "pwd",
+    "value", "placeholder", "example", "sample", "dummy", "test", "fake",
+    "change", "changeme", "me", "foo", "bar", "xxx", "xxxx",
+})
+
+
+def _is_placeholder(value: Any) -> bool:
+    """True when *value* is not a literal secret but a marker or a template hole."""
+    text = str(value or "").strip().strip("'\"")
+    if not text:
+        return True
+    if ba.SECRET_PLACEHOLDER_RE.match(text) or _ALREADY_SAFE_RE.match(text):
+        return True
+    if any(token in text for token in _PLACEHOLDER_TOKENS):
+        return True
+    words = [word for word in re.split(r"[^a-z0-9]+", text.lower()) if word]
+    return len(words) > 1 and all(word in _PLACEHOLDER_WORDS for word in words)
+
+
+def _labelled_assignment_replacement(match: Any) -> str:
+    """``password=<redacted>`` keeps its name, loses only a literal value."""
+    if _is_placeholder(match.group(2)):
+        return match.group(0)
+    return "%s=[REDACTED]" % match.group(1)
+
+
+def _connection_string_replacement(match: Any) -> str:
+    """Keep ``scheme://user:`` and the host; redact only the password."""
+    if _is_placeholder(match.group(2)):
+        return match.group(0)
+    return "%s[REDACTED]@" % match.group(1)
+
+
 _PATTERN_REDACTIONS: Tuple[Tuple[Any, Any], ...] = (
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED AWS KEY ID]"),
     (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}\b"), "[REDACTED GITHUB TOKEN]"),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[REDACTED GITHUB TOKEN]"),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "[REDACTED SLACK TOKEN]"),
     (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), "[REDACTED API KEY]"),
+    (re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b"), "[REDACTED STRIPE KEY]"),
     (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"), "[REDACTED GOOGLE API KEY]"),
     (re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
      "[REDACTED JWT]"),
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
      "[REDACTED PRIVATE KEY]"),
     (re.compile(r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)\b\s*[=:]\s*['\"]?"
-                r"[^\s'\"]{6,}"), lambda m: "%s=[REDACTED]" % m.group(1)),
+                r"([^\s'\"]{6,})"),
+     _labelled_assignment_replacement),
+    # A connection string carries its password inside the authority section, so it
+    # reads as an ordinary URL to every pattern above.
+    (re.compile(r"(?i)\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql)://"
+                r"[^\s:/@]+:)([^\s@/]{1,120})@"),
+     _connection_string_replacement),
 )
 
 _REDACTABLE_FIELDS: Tuple[str, ...] = (
     "title", "evidence", "description", "impact", "attack_scenario",
     "recommended_fix", "validation",
 )
+
+#: Every credential shape the built-in analyzer can *detect* must also be
+#: redactable here, because :func:`capture_evidence` re-quotes the audited file and
+#: redacts the fresh copy: a shape missing from the table above restores a value
+#: the analyzer had already replaced. A Stripe key survived into reports that way
+#: until this sweep existed. Compiling the analyzer's own table keeps the two in
+#: step without a second hand-maintained list; the labelled entries above still
+#: win where they name a more specific marker.
+_ANALYZER_REDACTIONS: Tuple[Tuple[Any, str], ...] = tuple(
+    (re.compile(pattern), label) for _secret_id, pattern, label in ba.SECRET_PATTERNS
+)
+
+
+def _substitute_counting(pattern: Any, replacement: Any, text: str) -> Tuple[str, int]:
+    """``pattern.sub`` that counts only the matches it actually rewrote.
+
+    A guard that matches but deliberately leaves the text alone (a documented
+    placeholder) is not a redaction and must not inflate the count.
+    """
+    hits = 0
+
+    def substitute(match: Any) -> str:
+        nonlocal hits
+        new = replacement(match) if callable(replacement) else match.expand(replacement)
+        if new != match.group(0):
+            hits += 1
+        return new
+
+    return pattern.sub(substitute, text), hits
+
+
+def _analyzer_shape_replacement(match: Any, label: str) -> str:
+    """Replace the captured secret and keep the words around it.
+
+    The analyzer's patterns either name the value (``?P<secret>``) or match the
+    value as a whole, so ``password = "…"`` keeps its assignment and loses only
+    the literal. A placeholder is left alone: it is not a secret, and rewriting it
+    would erase the guidance that put it there.
+    """
+    named = match.groupdict().get("secret")
+    value = (named if named is not None else match.group(0)).strip().strip("'\"")
+    if _is_placeholder(value):
+        # Not a secret, or already replaced by an earlier pattern (a connection
+        # string's password becomes "[REDACTED]" and then matches again): leave it.
+        return match.group(0)
+    marker = "[REDACTED %s]" % label.upper()
+    if named is not None:
+        return match.group(0).replace(named, marker)
+    return marker
 
 
 def redact_text(text: Any, secrets: Sequence[str] = ()) -> Tuple[Any, int]:
@@ -718,7 +824,11 @@ def redact_text(text: Any, secrets: Sequence[str] = ()) -> Tuple[Any, int]:
         return text, 0
     text, count = fm.redact_text(text, secrets)
     for pattern, replacement in _PATTERN_REDACTIONS:
-        text, hits = pattern.subn(replacement, text)
+        text, hits = _substitute_counting(pattern, replacement, text)
+        count += hits
+    for pattern, label in _ANALYZER_REDACTIONS:
+        text, hits = _substitute_counting(
+            pattern, lambda match, _label=label: _analyzer_shape_replacement(match, _label), text)
         count += hits
     return text, count
 
