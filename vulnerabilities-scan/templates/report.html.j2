@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="vulnerabilities-scan {{ meta.skill_version }}">
+<title>Security Audit Report — {{ meta.repository }}</title>
+<style>
+{{ css }}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to findings</a>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Security audit report</p>
+    <h1>{{ meta.repository }}</h1>
+    <dl class="facts">
+      <div><dt>Commit</dt><dd><code>{{ meta.commit_short }}</code></dd></div>
+      <div><dt>Branch</dt><dd>{{ meta.branch }}</dd></div>
+      <div><dt>Working tree</dt><dd class="state-{{ meta.dirty_display }}">{{ meta.dirty_display }}</dd></div>
+      <div><dt>Audited</dt><dd>{{ meta.audit_date }}</dd></div>
+      <div><dt>Scope</dt><dd><code>{{ meta.scope }}</code></dd></div>
+      <div><dt>Skill</dt><dd>vulnerabilities-scan {{ meta.skill_version }}</dd></div>
+    </dl>
+    {% if meta.dirty_files %}<p class="warn">Uncommitted changes were present at audit time: {{ meta.dirty_files|join(", ") }}. Line numbers refer to this working tree, not to a published commit.</p>{% endif %}
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#verdict">Verdict</a></li>
+    <li><a href="#summary">Summary</a></li>
+    <li><a href="#coverage">Coverage and limitations</a></li>
+    <li><a href="#findings">Findings by priority</a></li>
+    <li><a href="#investigation">Needs investigation</a></li>
+    <li><a href="#negative">Negative findings</a></li>
+    <li><a href="#suppressed">Suppressed findings</a></li>
+    <li><a href="#methodology">Methodology</a></li>
+    <li><a href="#prompt-injection">Prompt-injection observations</a></li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<section id="verdict">
+  <h2>Verdict</h2>
+  <div class="verdict">
+    {% for sentence in verdict %}<p>{{ sentence }}</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section id="summary">
+  <h2>Summary</h2>
+  <div class="cards">
+    {% for name, count in counts.by_severity.items() %}<div class="card sev-{{ name|lower }}">
+      <span class="card-count">{{ count }}</span>
+      <span class="card-label">{{ name }}</span>
+    </div>
+    {% endfor %}<div class="card total">
+      <span class="card-count">{{ counts.total }}</span>
+      <span class="card-label">Total</span>
+    </div>
+  </div>
+
+  <table class="grid">
+    <caption>Severity distribution. Counts are recomputed from the findings array.</caption>
+    <thead><tr><th scope="col">Severity</th><th scope="col">Findings</th><th scope="col">Validated</th><th scope="col">Under investigation</th><th scope="col">Suppressed</th></tr></thead>
+    <tbody>
+      {% for name, count in counts.by_severity.items() %}<tr><th scope="row"><span class="badge sev-{{ name|lower }}">{{ name }}</span></th><td>{{ count }}</td><td>—</td><td>—</td><td>—</td></tr>
+      {% endfor %}<tr class="total-row"><th scope="row">Total</th><td>{{ counts.total }}</td><td>{{ counts.validated }}</td><td>{{ counts.needs_investigation }}</td><td>{{ counts.suppressed }}</td></tr>
+    </tbody>
+  </table>
+
+  <table class="grid">
+    <caption>Confidence and scoring.</caption>
+    <thead><tr><th scope="col">Confidence</th><th scope="col">Count</th></tr></thead>
+    <tbody>
+      {% for name, count in counts.by_confidence.items() %}<tr><th scope="row">{{ name }}</th><td>{{ count }}</td></tr>
+      {% endfor}<tr><th scope="row">Scored with CVSS v4.0</th><td>{{ counts.scored }}</td></tr>
+      <tr><th scope="row">Explicitly unscored</th><td>{{ counts.unscored }}</td></tr>
+    </tbody>
+  </table>
+
+  {% if integrity.summary_disagreements %}<p class="warn"><strong>Dataset integrity warning.</strong> {{ integrity.summary_disagreements|join("; ") }}. The numbers above are recomputed from the findings array, which is authoritative.</p>{% endif %}
+</section>
+
+<section id="coverage">
+  <h2>Coverage and limitations</h2>
+  <p class="note">A scan that did not run is not a successful scan, and an unexamined module is not an audited module.</p>
+  <table class="grid">
+    <thead><tr><th scope="col">Item</th><th scope="col">Value</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Files scanned</th><td>{{ coverage.files_scanned }}</td></tr>
+      <tr><th scope="row">Files in scope</th><td>{{ coverage.files_in_scope }}</td></tr>
+      <tr><th scope="row">Languages</th><td>{{ coverage.languages|join(", ") }}</td></tr>
+      <tr><th scope="row">Rules evaluated</th><td>{{ coverage.rules_evaluated }}</td></tr>
+      <tr><th scope="row">Network access during scan</th><td>{{ coverage.network_allowed }}</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Scanners</h3>
+  {% if coverage.tools %}<table class="grid">
+    <thead><tr><th scope="col">Scanner</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Version</th><th scope="col">Note</th></tr></thead>
+    <tbody>
+      {% for tool in coverage.tools %}<tr class="status-{{ tool.status }}"><th scope="row">{{ tool.name }}</th><td>{{ tool.kind }}</td><td>{{ tool.status }}</td><td>{{ tool.version }}</td><td>{{ tool.reason }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>{% else %}<p class="note">No scanner probe results were supplied, so this audit cannot state which external tools ran. Treat automated coverage as unknown.</p>{% endif %}
+
+  {% if coverage.runs %}<h3>Scanner runs</h3>
+  <table class="grid">
+    <thead><tr><th scope="col">Scanner</th><th scope="col">Status</th><th scope="col">Exit</th><th scope="col">Findings</th><th scope="col">Note</th></tr></thead>
+    <tbody>
+      {% for run in coverage.runs %}<tr class="status-{{ run.status }}"><th scope="row">{{ run.tool }}</th><td>{{ run.status }}</td><td>{{ run.exit_code }}</td><td>{{ run.findings }}</td><td>{{ run.error }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>{% endif %}
+
+  <h3>Not covered</h3>
+  <ul class="gaps">
+    {% if coverage.tools_unavailable %}<li><strong>Unavailable scanners:</strong> {{ coverage.tools_unavailable|join(", ") }}. Their absence is a coverage gap, not evidence that the corresponding weaknesses are absent.</li>{% endif %}
+    {% if coverage.tools_failed %}<li><strong>Failed or unparsable:</strong> {{ coverage.tools_failed|join(", ") }}.</li>{% endif %}
+    {% if coverage.tools_skipped %}<li><strong>Skipped by configuration:</strong> {{ coverage.tools_skipped|join(", ") }}.</li>{% endif %}
+    {% if coverage.never_run %}<li><strong>Never automated by this skill:</strong> {{ coverage.never_run|join("; ") }}.</li>{% endif %}
+    {% if coverage.excluded %}<li><strong>Excluded paths:</strong> {{ coverage.excluded|join(", ") }}.</li>{% endif %}
+    {% if coverage.not_analysed %}<li><strong>Not analysed:</strong> {{ coverage.not_analysed|join(", ") }}.</li>{% endif %}
+    {% if coverage.limitations %}<li><strong>Recorded limitations:</strong><ul>{% for item in coverage.limitations %}<li>{{ item }}</li>
+      {% endfor %}</ul></li>{% endif %}
+  </ul>
+  {% if not coverage.limitations and not coverage.tools_unavailable and not coverage.tools_failed and not coverage.never_run %}<p class="warn">No coverage limitation was recorded. That is unusual: check that audit metadata was supplied, because a report that cannot state its coverage cannot be relied on.</p>{% endif %}
+  {% if not coverage.metadata_present %}<p class="warn">No scanner or inventory report was supplied. The coverage claims above are limited to what the findings dataset recorded, and no tool inventory could be verified.</p>{% endif %}
+</section>
+
+<section id="findings">
+  <h2>Findings by priority</h2>
+  {% if not findings %}<p class="note">No validated vulnerabilities were recorded. See the coverage section for what that does and does not mean.</p>{% endif %}
+  {% if findings %}<div class="toolbar">
+    <label for="filter">Filter</label>
+    <input id="filter" type="search" placeholder="id, title, file, CWE…" autocomplete="off">
+    <span class="toolbar-note" id="filter-count">{{ findings|length }} of {{ findings|length }} shown</span>
+  </div>
+  <p class="print-note">Filters are interactive only; the printed report always contains every finding.</p>{% endif %}
+  {% for finding in findings %}<article class="finding sev-{{ finding.severity_class }}" id="{{ finding.id }}">
+    <header class="finding-head">
+      <span class="badge sev-{{ finding.severity_class }}">{{ finding.severity }}</span>
+      <span class="fid">{{ finding.id }}</span>
+      <h3>{{ finding.title }}</h3>
+      <p class="where"><code>{{ finding.where }}</code> · {{ finding.priority }} · {{ finding.confidence }}{% if finding.in_test_path %} · test path{% endif %}</p>
+    </header>
+    <dl class="props">
+      <div><dt>CVSS v4.0</dt><dd>{{ finding.cvss.display }}{% if finding.cvss.vector != "" %} <code class="vector">{{ finding.cvss.vector }}</code>{% endif %}</dd></div>
+      <div><dt>CWE</dt><dd>{{ finding.cwe }}</dd></div>
+      <div><dt>OWASP</dt><dd>{{ finding.owasp }}</dd></div>
+      <div><dt>Category</dt><dd>{{ finding.category }}</dd></div>
+      <div><dt>Language</dt><dd>{{ finding.language }}</dd></div>
+      <div><dt>Reported by</dt><dd>{{ finding.sources|join(", ") }}</dd></div>
+      <div><dt>Validation</dt><dd>{{ finding.validation_status }}</dd></div>
+    </dl>
+    {% if finding.priority_factors %}<p class="factors"><strong>Why this priority:</strong> {{ finding.priority_factors|join("; ") }}</p>{% endif %}
+    <p>{{ finding.description }}</p>
+    <p><strong>Impact.</strong> {{ finding.impact }}</p>
+    <p><strong>Attack scenario.</strong> {{ finding.attack_scenario }}</p>
+    {% if finding.preconditions %}<p><strong>Preconditions.</strong> {{ finding.preconditions|join("; ") }}</p>{% endif %}
+    {% if finding.sites|length > 1 %}<p><strong>Additional sites.</strong> {% for site in finding.sites %}<code>{{ site.file }}:{{ site.line_start }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    <h4>Evidence</h4>
+    {% if finding.evidence.empty %}<p class="note">No source excerpt was captured for this finding.</p>{% else %}<pre class="evidence"><code>{{ finding.evidence.text }}</code></pre>{% endif %}
+    <h4>Remediation</h4>
+    <p>{{ finding.recommended_fix }}</p>
+    {% if finding.references %}<h4>References</h4><ul class="refs">{% for reference in finding.references %}<li>{{ reference }}</li>
+    {% endfor %}</ul>{% endif %}
+    {% if finding.validation %}<details class="transcript"><summary>Validation transcript</summary><p>{{ finding.validation }}</p></details>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+
+<section id="investigation">
+  <h2>Needs investigation</h2>
+  <p class="note">These items were <strong>not</strong> validated as vulnerabilities. They are listed so a reviewer can confirm or discard them, and are excluded from the validated counts.</p>
+  {% if not needs_investigation %}<p class="note">None recorded.</p>{% endif %}
+  {% for finding in needs_investigation %}<article class="finding sev-{{ finding.severity_class }} slim" id="{{ finding.id }}">
+    <header class="finding-head">
+      <span class="badge sev-{{ finding.severity_class }}">{{ finding.severity }}</span>
+      <span class="fid">{{ finding.id }}</span>
+      <h3>{{ finding.title }}</h3>
+      <p class="where"><code>{{ finding.where }}</code> · {{ finding.confidence }}{% if finding.cvss.display != "unscored" %} · CVSS {{ finding.cvss.display }}{% endif %}</p>
+    </header>
+    <p>{{ finding.description }}</p>
+    {% if finding.validation %}<p class="factors"><strong>Why it is unresolved:</strong> {{ finding.validation }}</p>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+
+<section id="negative">
+  <h2>Negative findings</h2>
+  <p class="note">Checks performed that found no issue. A short list here usually means the audit was shallow, not that the code is safe.</p>
+  {% if not negative_findings %}<p class="note">None recorded.</p>{% endif %}
+  {% if negative_findings %}<ul class="negatives">{% for item in negative_findings %}<li><strong>{{ item.title|default(item.check)|default("Unnamed check") }}</strong> — {{ item.detail|default(item.result)|default("checked, no issue found") }}{% if item.location %} <code>{{ item.location }}</code>{% endif %}</li>
+  {% endfor %}</ul>{% endif %}
+</section>
+
+<section id="suppressed">
+  <h2>Suppressed findings</h2>
+  {% if not suppressed %}<p class="note">None. No finding was dismissed by a compensating control.</p>{% endif %}
+  {% if suppressed %}<ul class="suppressed-list">{% for finding in suppressed %}<li><strong>{{ finding.id }} {{ finding.title }}</strong> ({{ finding.severity }}) — {{ finding.suppression_reason|default("no reason recorded") }}</li>
+  {% endfor %}</ul>{% endif %}
+</section>
+
+<section id="methodology">
+  <h2>Methodology</h2>
+  <ol class="approach">
+    {% for step in methodology.approach %}<li>{{ step }}</li>
+    {% endfor %}
+  </ol>
+  <h3>Standards used</h3>
+  <ul>{% for standard in methodology.standards %}<li>{{ standard }}</li>
+  {% endfor %}</ul>
+  <h3>Severity bands</h3>
+  <p>{{ methodology.bands }}</p>
+  <table class="grid">
+    <thead><tr><th scope="col">Severity</th><th scope="col">What it means</th></tr></thead>
+    <tbody>
+      {% for band in methodology.severity_meaning %}<tr><th scope="row"><span class="badge sev-{{ band.name|lower }}">{{ band.name }}</span></th><td>{{ band.meaning }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h3>Confidence</h3>
+  <table class="grid">
+    <thead><tr><th scope="col">Level</th><th scope="col">What it means</th></tr></thead>
+    <tbody>
+      {% for level in methodology.confidence_meaning %}<tr><th scope="row">{{ level.name }}</th><td>{{ level.meaning }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h3>Validation policy</h3>
+  <p>{{ dataset_policy }}</p>
+</section>
+
+<section id="prompt-injection">
+  <h2>Prompt-injection observations</h2>
+  {% if not meta.prompt_injection %}<p class="note">No repository text attempted to instruct the auditor.</p>{% endif %}
+  {% if meta.prompt_injection %}<ul class="injection">{% for item in meta.prompt_injection %}<li>{{ item }}</li>
+  {% endfor %}</ul>{% endif %}
+</section>
+
+</main>
+
+<footer class="colophon">
+  <p>Generated {{ generated_at }} by {{ tool.name }} {{ tool.version }} from a single findings dataset.</p>
+  <p>Line numbers refer to the audited snapshot at commit <code>{{ meta.commit_short }}</code> ({{ meta.dirty_display }}). Raw scanner output, if archived, is sensitive and is not part of this report.</p>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var input = document.getElementById("filter");
+  var counter = document.getElementById("filter-count");
+  if (!input || !counter) { return; }
+  var cards = Array.prototype.slice.call(document.querySelectorAll("#findings article.finding"));
+  var total = cards.length;
+  function haystack(card) {
+    return card.textContent.toLowerCase();
+  }
+  function apply() {
+    var needle = input.value.trim().toLowerCase();
+    var shown = 0;
+    cards.forEach(function (card) {
+      var hit = needle === "" || haystack(card).indexOf(needle) !== -1;
+      card.hidden = !hit;
+      if (hit) { shown++; }
+    });
+    counter.textContent = shown + " of " + total + " shown";
+  }
+  input.addEventListener("input", apply);
+  apply();
+})();
+</script>
+</body>
+</html>
