@@ -145,6 +145,37 @@ def test_secure_look_alikes_produce_only_the_recorded_false_positives():
         assert item["status"] == "open", item
 
 
+def test_every_secure_look_alike_differs_from_its_vulnerable_twin():
+    """A look-alike that is byte-identical to its twin would prove nothing.
+
+    The expectation set declares the file each vulnerable class lives in; the
+    secure corpus mirrors the same relative paths with protected
+    implementations. If a pair were identical, the rule under test could not
+    tell vulnerable from secure, and the recorded false-positive list would be
+    luck rather than a measurement.
+    """
+    vulnerable = pipeline("vulnerable-app")["root"]
+    secure = pipeline("secure-app")["root"]
+    declared = sorted({item["path"] for entry in expectations()["classes"]
+                       for item in entry["vulnerable"]["files"]})
+    assert len(declared) >= 10, declared
+    identical, absent = [], []
+    for path in declared:
+        left = os.path.join(vulnerable, path)
+        right = os.path.join(secure, path)
+        if not os.path.isfile(right):
+            absent.append(path)
+            continue
+        with open(left, "rb") as handle:
+            vulnerable_bytes = handle.read()
+        with open(right, "rb") as handle:
+            secure_bytes = handle.read()
+        if vulnerable_bytes == secure_bytes:
+            identical.append(path)
+    assert absent == [], absent
+    assert identical == [], identical
+
+
 # --- the delivered report set --------------------------------------------- #
 
 

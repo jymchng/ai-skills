@@ -17,7 +17,7 @@ rather than omitted.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q            # 277 tests
+python3 -m pytest tests -q            # 278 tests
 ```
 
 The end-to-end audit is `tests/test_end_to_end_audit.py`; it runs both fixture corpora through all
@@ -53,7 +53,7 @@ stale bytes as live.
 ## 2. Test suite
 
 ```
-277 passed in 31.07s
+278 passed in 33.02s
 ```
 
 | Test module | Tests | What it pins |
@@ -65,11 +65,11 @@ stale bytes as live.
 | `test_report_generation.py` | 25 | Markdown/HTML/JSON renderers, per-finding JSON, index, manifest, determinism |
 | `test_scanner_orchestrator.py` | 22 | Tool discovery, timeouts, unavailable-tool accounting |
 | `test_builtin_analyzers.py` | 16 | Rule matching per category, secure look-alike silence |
-| `test_end_to_end_audit.py` | 12 | The two corpora, eight stages, artefact consistency |
+| `test_end_to_end_audit.py` | 13 | The two corpora, eight stages, artefact consistency, twin difference |
 | `test_repository_inventory.py` | 12 | File discovery, excluded directories, language classification, budgets |
 | `test_attack_surface.py` | 10 | Route/framework extraction and auth heuristics |
 | `test_detect_technologies.py` | 10 | Language/manifest/import detection |
-| **Total** | **277** | |
+| **Total** | **278** | |
 
 Every module runs offline and writes only under `.scratch/` (git-ignored).
 
@@ -179,31 +179,38 @@ The 6 findings are exactly the 6 entries in `expected_findings.json → known_fa
 matched one-for-one on `(category, file, line, rule_id)`. This is the corpus's real job: it proves
 the rules distinguish `hashlib.pbkdf2_hmac(..., 600_000)` from `hashlib.md5`, a parameterised query
 from a concatenated one, and a same-origin CORS header from `*`. Every secure look-alike is
-byte-different from its vulnerable twin (asserted), so the pair actually tests the rule and not
-file identity.
+byte-different from its vulnerable twin (asserted by
+`test_every_secure_look_alike_differs_from_its_vulnerable_twin`), so the pair actually tests the
+rule and not file identity.
 
 ---
 
 ## 5. Machine-readable deliverables
 
-Each of the 108 findings gets **exactly one** `.json` describing it; run-level metadata has its own
-file. This is the contract asserted by `test_report_generation.py` and
+Each of the 108 findings gets **exactly one** `.json` describing it; the aggregate metadata has its
+own file. This is the contract asserted by `test_report_generation.py` and
 `test_end_to_end_audit.py`.
 
-| File | Contents |
-|---|---|
-| `findings-index.json` | One entry per finding: `id`, `kind`, `file`, `line_start`, `line_end`, `category`, `title`, `severity`, `confidence`, `priority`, `validation_status`, `ticketable`, `ticketable_reason`, `ticket{path, sha256}` — plus `totals` |
-| `tickets/<ID>.json` | The full per-finding description: location, evidence with line context, CVSS 4.0 vector and score, remediation, references, provenance |
-| `audit-metadata.json` | Run identity: tool versions, snapshot digest, coverage, validation policy, counts |
-| `SECURITY-AUDIT-REPORT.json` | Aggregate report document (the same content the Markdown and HTML render) |
-| `report-manifest.json` | Every artefact with size, SHA-256, and per-format severity counts |
-| `verification.json` | The `validate_reports.py` verdict for the run |
+| File | Contents | Written by |
+|---|---|---|
+| `findings-index.json` | One entry per finding: `id`, `kind`, `file`, `line_start`, `line_end`, `category`, `title`, `severity`, `confidence`, `priority`, `validation_status`, `ticketable`, `ticketable_reason`, `ticket{path, sha256}` — plus `totals` | `generate_reports.py` |
+| `tickets/<ID>.json` | The full per-finding description: location, evidence with line context, CVSS 4.0 vector and score, remediation, references, provenance | `generate_reports.py` |
+| `report-manifest.json` | The aggregate record: run identity in `meta` (repository, commit, branch, dirty state, audit date, skill version, dataset stage and tool), counts by severity, status and confidence, and every artefact with its size and SHA-256 | `generate_reports.py` |
+| `SECURITY-AUDIT-REPORT.json` | Aggregate report document (the same content the Markdown and HTML render) | `generate_reports.py` |
+
+Two things in that area are deliberately *not* written into the report directory:
+
+- `audit-metadata.json` is an **input**, not an output. An operator may pass
+  `--metadata audit/audit-metadata.json` (repository, commit, audit date, environment) and
+  `generate_reports.py` folds it into the manifest's `meta` block; when it is omitted the identity is
+  derived from the snapshot itself, which is what happened for every run in this document.
+- The `validate_reports.py` verdict goes to **stdout** as JSON (redirect it if you want a file),
+  because a validator that fails must not be the thing that writes an artefact claiming it passed.
+  The verdict still carries a SHA-256 for the dataset, the manifest, each rendered format and the
+  index, so a delivered report set can be proven to belong to the dataset it claims.
 
 Index totals agree with the dataset in both corpora: 108 findings / 78 ticketable / 78 validated /
 28 needs-investigation / 2 suppressed, and 6 / 4 / 4 / 1 / 1.
-
-`verify.json` also records a SHA-256 for the dataset, the manifest, each rendered format, and the
-index, so a delivered report set can be proven to belong to the dataset it claims.
 
 ---
 
@@ -233,8 +240,10 @@ aggregate metadata its own file) and is the reason `references/reporting-standar
    YAML/JSON parse). A run with Semgrep/Bandit installed would add scanner-backed sources, not
    change these counts.
 2. **No PDF.** The PDF renderer needs a toolchain that is not installed; every run in this document
-   requested `markdown,html,json`. `validate_reports.py` reports the absence as a warning, and the
-   manifest lists PDF as `unavailable` rather than pretending it was produced.
+   requested `markdown,html,json`. `validate_reports.py` records `pdf_state: absent` and one
+   informational warning ("the manifest lists no pdf format, so this run requested only html, json,
+   markdown") rather than a problem, and `--require-pdf` turns a missing PDF into a failure once the
+   toolchain is present. No claim in this document depends on a PDF existing.
 3. **Route-bearing code with no enumerable routes.** The ASP.NET Core controller and parts of the
    Java servlet are not enumerated by `attack_surface.py`, so findings in them carry no route
    context. Recorded as outstanding work; it affects context quality, not detection counts.
@@ -242,7 +251,7 @@ aggregate metadata its own file) and is the reason `references/reporting-standar
    both directions of the false-positive question, but it is not a measurement of precision on a
    production codebase. The corpora are the regression contract; production precision is unknown
    until the skill is run against real repositories.
-5. **Timings are for an idle machine** (31 s for 277 tests, ≈5 s for both corpora) and include no
+5. **Timings are for an idle machine** (33 s for 278 tests, ≈5 s for both corpora) and include no
    network or scanner latency, so they are a floor, not a budget.
 
 ---
