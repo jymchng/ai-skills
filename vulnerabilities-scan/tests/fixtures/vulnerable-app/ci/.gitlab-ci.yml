@@ -1,0 +1,9 @@
+stages: [build, deploy]
+
+build:
+  image: node:latest
+  script:
+    - curl -fsSL https://example.invalid/install.sh | sh
+    - npm ci
+  artifacts:
+    paths: [dist/]

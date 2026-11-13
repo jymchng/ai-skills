@@ -1,0 +1,20 @@
+- name: Provision the orders host, secure mirror image of the vulnerable one
+  hosts: orders
+  become: true
+  tasks:
+    - name: Download the release tarball
+      ansible.builtin.get_url:
+        url: https://example.invalid/release.tgz
+        dest: /srv/release.tgz
+        validate_certs: yes
+        checksum: "sha256:{{ release_digest }}"
+    - name: Run the packaged installer
+      ansible.builtin.command:
+        argv:
+          - /srv/install.sh
+          - "{{ release_channel }}"
+    - name: Create the release directory
+      ansible.builtin.file:
+        path: /srv/release
+        state: directory
+        mode: "0750"

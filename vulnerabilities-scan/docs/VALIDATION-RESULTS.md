@@ -17,7 +17,7 @@ rather than omitted.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q            # 307 tests
+python3 -m pytest tests -q            # 316 tests
 ```
 
 The end-to-end audit is `tests/test_end_to_end_audit.py`; it runs both fixture corpora through all
@@ -72,19 +72,19 @@ of intent.
 | 12 | Templates | `templates/report.md.j2`, `templates/report.html.j2`, `templates/report.css` | self-contained HTML, no CDN, escaped untrusted content, print styles |
 | 13 | Renderers | `scripts/generate_markdown.py`, `generate_html.py`, `generate_pdf.py`, `generate_json.py`, `generate_reports.py` | one dataset rendered to every format, plus tickets, `findings-index.json` and `report-manifest.json` |
 | 14 | Report validator | `scripts/validate_reports.py` | exit 0 with 0 problems on both corpora (section 4); `--require-pdf` escalates a missing PDF |
-| 15 | Fixtures and test suite | `tests/` | 13 test modules plus `conftest.py`, 50 fixture files (24 vulnerable-app, 24 secure-app, 2 expectation data), 307 tests |
+| 15 | Fixtures and test suite | `tests/` | 14 test modules plus `conftest.py`, 74 fixture files (34 vulnerable-app, 34 secure-app, 2 expectation data), 316 tests |
 | 16 | Research and validation record | `docs/RESEARCH.md`, `docs/RESEARCH-SOURCES.json`, `docs/VALIDATION-RESULTS.md`, `README.md` | dated sources with SHA-256 digests; this document; the human-facing install/use guide |
 
 Re-measure the inventory rather than trusting the table:
 
 ```bash
-git ls-files | wc -l                        # 101 tracked files
+git ls-files | wc -l                        # 122 tracked files
 git ls-files references | wc -l             # 8
-git ls-files tests/test_*.py | wc -l        # 13
-git ls-files tests/fixtures | wc -l         # 50
+git ls-files tests/test_*.py | wc -l        # 14
+git ls-files tests/fixtures | wc -l         # 74
 for s in scripts/*.py; do python3 "$s" --help >/dev/null || echo "no --help: $s"; done
                                             # prints nothing: all 17 modules accept --help
-python3 -m pytest tests -q                  # 307 passed
+python3 -m pytest tests -q                  # 316 passed
 ```
 
 Everything after this section is measurement. This section is the inventory that measurement
@@ -95,7 +95,7 @@ attaches to.
 ## 3. Test suite
 
 ```
-307 passed in 39.61s
+316 passed in 54.68s
 ```
 
 | Test module | Tests | What it pins |
@@ -109,11 +109,12 @@ attaches to.
 | `test_builtin_analyzers.py` | 22 | Rule matching per category, secure look-alike silence, self-scan precision |
 | `test_attack_surface.py` | 22 | Route/framework extraction, auth heuristics, route-bearing code no rule can enumerate |
 | `test_end_to_end_audit.py` | 13 | The two corpora, eight stages, artefact consistency, twin difference |
+| `test_scan_families.py` | 9 | Every rule added beyond the original languages, in both directions: fires on the wrong code, silent on its look-alike; plus the classification and masking defects that hid them |
 | `test_repository_inventory.py` | 12 | File discovery, excluded directories, language classification, budgets |
 | `test_detect_technologies.py` | 10 | Language/manifest/import detection |
 | `test_redaction_markers.py` | 6 | One marker spelling per credential shape, identical across all three redacting stages |
 | `test_push_protection_literals.py` | 5 | No live-credential shape anywhere in the tracked tree |
-| **Total** | **307** | |
+| **Total** | **316** | |
 
 Every module runs offline and writes only under `.scratch/` (git-ignored).
 
@@ -131,15 +132,15 @@ categories covered.
 
 | Stage | In | Out |
 |---|---|---|
-| Inventory | — | 24 files scanned |
-| Technologies | 24 files | 8 application languages, 19 frameworks/imports incl. PyJWT, jsonwebtoken, and 7 runtimes |
-| Attack surface | 24 files | 14 HTTP routes (9 GET / 5 POST), 14 without visible auth, 3 auth mechanisms, 0 non-HTTP surfaces, 1 file carrying routes no rule can enumerate |
-| Analyzers | 24 files | **120 findings** |
-| Dedupe | 120 | **108 findings** (12 duplicates removed, 0 without provenance) |
-| Validation | 108 | 108 findings; 2 suppressed; 2 secrets redacted; **0 leaks** |
-| Reports | 108 | markdown + html + json + index + manifest + 108 per-finding tickets |
+| Inventory | — | 34 files scanned |
+| Technologies | 34 files | 15 application languages, 19 frameworks/imports incl. PyJWT, jsonwebtoken, and 7 runtimes |
+| Attack surface | 34 files | 14 HTTP routes (9 GET / 5 POST), 14 without visible auth, 3 auth mechanisms, 0 non-HTTP surfaces, 1 file carrying routes no rule can enumerate |
+| Analyzers | 34 files | **152 findings** |
+| Dedupe | 152 | **135 findings** (17 duplicates removed, 0 without provenance) |
+| Validation | 135 | 135 findings; 3 suppressed; 3 secrets redacted; **0 leaks** |
+| Reports | 135 | markdown + html + json + index + manifest + 135 per-finding tickets |
 
-The 120 → 108 drop is the deduplicator merging adjacent same-fingerprint reports (e.g. the
+The 152 → 135 drop is the deduplicator merging adjacent same-fingerprint reports (e.g. the
 Terraform misconfiguration cluster in `infra/terraform/main.tf`), not findings being dropped for
 inconvenience: `dedupe.merges` records every merge with the kept and dropped locations.
 
@@ -154,8 +155,8 @@ document moves because of it: the record adds context, not detections.
 ### 3.2 Required detection classes
 
 All **20 of 20** required classes are still detected, with the exact per-class counts recorded in
-`tests/fixtures/expected_findings.json` (`7,4,8,2,6,5,12,7,5,3,3,5,8,7,5,2,1,6,4,6`, total 120 in
-the pre-dedupe analysis), and every file declared vulnerable in that file exists on disk and
+`tests/fixtures/expected_findings.json` (`10,10,8,2,8,5,12,7,5,3,3,6,9,7,5,2,1,11,6,6`, total 126 in
+the pre-dedupe analysis for those 20 classes), and every file declared vulnerable in that file exists on disk and
 carries a finding of its declared class.
 
 Measured in both directions, which is the only way "no false positives" means anything:
@@ -164,47 +165,51 @@ Measured in both directions, which is the only way "no false positives" means an
 |---|---|---|---|---|
 | Required classes (vulnerable corpus) | 20 | 20 | 0 | — |
 | Declared vulnerable files | 17 | 17 | 0 | — |
-| Findings before dedupe (vulnerable) | 120 | 120 | 0 | — |
-| Findings after dedupe (vulnerable) | 108 | 108 | 0 | — |
+| Findings before dedupe (vulnerable) | 152 | 152 | 0 | — |
+| Findings after dedupe (vulnerable) | 135 | 135 | 0 | — |
 | Findings (secure corpus) | 6 recorded false positives | 6 | — | 0 |
 
 Per-class agreement is exact, not "at least one": for every one of the 20 classes the detected count
 equals the count recorded in `expected_findings.json` (asserted by
-`test_all_twenty_required_classes_are_still_detected`). The run reports 23 categories, not 20: the
-required 20 plus `iac_misconfiguration`, `kubernetes_security` and `unpinned_dependency`, which are
+`test_all_twenty_required_classes_are_still_detected`). The run reports 27 categories, not 20: the
+required 20 plus `iac_misconfiguration`, `kubernetes_security`, `unpinned_dependency`,
+`code_injection`, `race_condition`, `tls_verification_disabled` and `weak_randomness`, which are
 real findings in the declared Dockerfile, Kubernetes, Terraform and dependency-manifest fixtures
 rather than noise from the source rules.
 
-`summary.by_category` over the 108 delivered findings:
+`summary.by_category` over the 135 delivered findings:
 
 | Category | n | Category | n |
 |---|---|---|---|
-| missing_authentication | 12 | ssrf | 5 |
-| xss_reflected | 8 | weak_password_hashing | 5 |
-| insecure_deserialization | 7 | business_logic | 5 |
-| missing_authorization | 7 | cicd_permissions | 4 |
-| sql_injection | 7 | kubernetes_security | 4 |
-| path_traversal | 6 | permissive_cors | 4 |
-| vulnerable_dependency | 6 | command_injection | 4 |
-| idor | 5 | container_security | 3 |
-| iac_misconfiguration | 5 | weak_jwt_validation | 3 |
-| hardcoded_secret | 2 | xss_stored | 2 |
-| unrestricted_upload | 2 | missing_rate_limiting | 1 |
-| unpinned_dependency | 1 | | |
+| missing_authentication | 12 | permissive_cors | 4 |
+| command_injection | 10 | kubernetes_security | 4 |
+| iac_misconfiguration | 10 | weak_jwt_validation | 3 |
+| sql_injection | 10 | code_injection | 2 |
+| path_traversal | 8 | hardcoded_secret | 2 |
+| insecure_deserialization | 8 | unrestricted_upload | 2 |
+| xss_reflected | 8 | xss_stored | 2 |
+| missing_authorization | 7 | missing_rate_limiting | 1 |
+| cicd_permissions | 6 | race_condition | 1 |
+| vulnerable_dependency | 6 | tls_verification_disabled | 1 |
+| weak_password_hashing | 6 | unpinned_dependency | 1 |
+| business_logic | 5 | weak_randomness | 1 |
+| container_security | 5 | | |
+| idor | 5 | | |
+| ssrf | 5 | | |
 
 ### 3.3 Severity, confidence, and disposition
 
 | Measure | Value |
 |---|---|
-| Findings | 108 (106 reportable, 2 suppressed) |
-| Scored / unscored | 108 / 0 — every finding carries a CVSS 4.0 score |
-| Critical | 17 |
-| High | 37 |
-| Medium | 45 (43 reportable) |
-| Low | 9 |
-| Confidence | 47 CONFIRMED, 31 HIGH, 5 MEDIUM, 25 LOW |
-| Validation status | 78 validated, 28 needs_review, 2 suppressed |
-| Ticketable | 78 |
+| Findings | 135 (132 reportable, 3 suppressed) |
+| Scored / unscored | 135 / 0 — every finding carries a CVSS 4.0 score |
+| Critical | 18 |
+| High | 43 |
+| Medium | 62 (59 reportable) |
+| Low | 12 |
+| Confidence | 61 CONFIRMED, 32 HIGH, 5 MEDIUM, 37 LOW |
+| Validation status | 93 validated, 39 needs_review, 3 suppressed |
+| Ticketable | 93 |
 
 The 28 `needs_review` findings are the advisory half of the contract: they are reported with
 their evidence and a stated reason they could not be proven from the snapshot alone, and they are
@@ -309,6 +314,8 @@ The suite was written to break the pipeline, and it did. Each fix below is now p
 | 6 | Not from this run: a later self-scan of `scripts/` reported 126 non-HTTP surfaces and 10 auth mechanisms | Reconnaissance read its own rule tables, docstrings and a commented-out decorator as live entry points and controls | `discover_auth` / `discover_non_http` now run against a comment- and string-blanked view with offsets preserved, non-HTTP rules must name a mechanism, and one surface is reported per kind per file; `test_self_scan_invents_no_surfaces` pins the result (16 real `__main__` guards, 0 web surfaces, 0 mechanisms) |
 | 7 | Each redacting stage kept its own copy of the marker text | One Stripe key read `[REDACTED STRIPE SECRET KEY]` from the orchestrator and `[REDACTED STRIPE KEY]` from the validator, so VULN-003's evidence showed two labels for one shape | `builtin_analyzers.SECRET_PATTERNS` is now `(id, pattern, label, marker)` and the single source of the spelling; `finding_model.shape_marker` / `redact_shape_match` build and apply it for all three stages, which removed the duplicated pattern tables from `validate_findings` and `scanner_orchestrator`; `tests/test_redaction_markers.py` asserts one identical marker per shape across the three, that a marker survives a second stage unchanged, and that `_shape_replacement`'s docstring keeps balanced code spans. While correcting that docstring: its example spelled a credential-shaped assignment, which every redaction-aware tool then masked in its own output and made the sentence look truncated — the example is gone, and the wording now describes what the function keeps (assignment name, URL authority) instead of the retired length marker |
 | 8 | Not from this run: `attack_surface.py` reported nothing at all for a convention-routed ASP.NET Core controller | The C# fixtures route by convention (no `[HttpGet]`/`[Route]`, a `.csproj` with no ASP.NET package reference), so they produced zero entry points *and* zero limitations: an unenumerable web app read exactly like an app with no endpoints, and the limitation that existed only fired for frameworks stage 2a *named* | New `CONTROLLER_STYLE_RULES` recognises a `Controller`/`ControllerBase`-derived class in the code-only view, `CONTROLLER_FRAMEWORK_SIGNALS` catches `using Microsoft.AspNetCore.Mvc` and `[ApiController]` when no route matched, and each such file becomes an `unenumerable_routes` record (`file`, `line`, `basis`, `class`, bounded `candidate_actions`, never an invented path) plus one aggregated limitation that says a zero-route result is a coverage gap. `test_attack_surface.py` pins both fixtures' gap, the attribute-routed negative case (a real route is never relabelled as a gap), the framework-signal-only case, the commented-out-controller negative case, and that no record carries a `path` |
+| 9 | Pipeline files and CloudFormation templates were classified as plain config | `ci/.gitlab-ci.yml` and `ci/Jenkinsfile` fell through to the ``config`` bucket because the anchored CI pattern was matched against the whole relative path and never the file name, so the CI rules -- keyed on the iac bucket -- could not see them; a CloudFormation template inherited ``kubernetes`` from whichever directory held it, and ``_language_matches`` then skipped every ``yaml``-keyed rule that did not apply | ``CI_FILE_RE`` is matched against the file name, a new ``CFN_DIR_RE`` labels CloudFormation directories ``cloudformation``, and ``IAC_LANGUAGES`` learned ``cloudformation`` and ``groovy``; `test_scan_families.py` pins both classifications |
+| 10 | Three rules matched a sentence instead of a call | ``system("date")`` was reported as command injection (the pattern accepted a string literal as a "variable"), ``cap_drop: - ALL`` was reported as adding every capability (the pattern could not tell add from drop), and ``WHERE name = 'xp_cmdshell'`` was reported as invoking it (the pattern matched the bare word, not the ``EXEC`` call) -- all three found by the secure look-alikes, which exist for exactly this | The C rule now requires an identifier immediately after the call parenthesis, ``k8s-caps`` gained a ``cap_add``/``capabilities`` context anchor, and ``sql-xp-cmdshell`` requires the ``EXEC ... xp_cmdshell`` form; each has its own negative test |
 
 Defect 5 came from a requirements change mid-validation (every finding must have its own JSON,
 aggregate metadata its own file) and is the reason `references/reporting-standard.md` gained its
@@ -340,11 +347,26 @@ behaviour was a real precision bug in the stage this document treats as ground t
    invent the `/Orders/List`-style URL its action names imply; the Java servlet remains unenumerated
    and is named as a framework with no route rule. Findings in those files therefore carry no route
    context. Stated, counted, and still a gap: it affects context quality, not detection counts.
-4. **Fixture corpora, not real repositories.** 24 files each is enough to exercise every rule and
+4. **The newer language families are pattern-only.** Rust, C/C++, Swift, shell, PowerShell, SQL and
+   Kotlin have a small rule set -- the sink each language makes dangerous -- but no dataflow: the
+   engines that trace a value from a request to a sink exist for the seven original languages. A
+   `format!`-built path that a neighbouring line already sanitises still matches. The confidence is
+   set accordingly (MEDIUM, not CONFIRMED), and every such finding lands in `needs_review` unless
+   the validator can re-read the evidence. Kotlin reuses five JVM rules verbatim because the pattern
+   is a JDK API call rather than syntax; `test_scan_families.py` pins all of them.
+5. **Not every inventoried language has a rule.** Scala, Elixir, Erlang, Clojure, Haskell, Lua,
+   Perl, R, Objective-C, Vue and Svelte are classified and reported in the inventory, and none has
+   a detection rule -- the inventory says so by omission, which is the honest signal but not a
+   finding. No fixture pins them, so nothing here claims coverage.
+6. **Classification is path-based for infrastructure.** A `cloudformation/` directory (or a
+   `.gitlab-ci.yml` file name) identifies a template only while the path still contains it: scanning
+   that directory *as* the repository root labels its files `config`. The audit walks the repository
+   root, so this affects ad-hoc subtree runs, not the results in this document.
+7. **Fixture corpora, not real repositories.** 34 files each is enough to exercise every rule and
    both directions of the false-positive question, but it is not a measurement of precision on a
    production codebase. The corpora are the regression contract; production precision is unknown
    until the skill is run against real repositories.
-5. **Timings are for an idle machine** (40 s for 307 tests, ≈5 s for both corpora) and include no
+8. **Timings are for an idle machine** (55 s for 316 tests, ≈7 s for both corpora) and include no
    network or scanner latency, so they are a floor, not a budget.
 
 ---

@@ -1,0 +1,10 @@
+services:
+  api:
+    image: example/api:1.4.2
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "8080:8080"

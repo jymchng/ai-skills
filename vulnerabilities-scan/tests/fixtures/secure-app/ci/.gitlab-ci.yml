@@ -1,0 +1,13 @@
+stages: [build, deploy]
+
+build:
+  image: node:20.11.1
+  script:
+    # Written to a file, verified against a published digest, then run by path.
+    - curl -fsSL -o install.sh https://example.invalid/install.sh
+    - curl -fsSL -o install.sha256 https://example.invalid/install.sha256
+    - sha256sum -c install.sha256
+    - sh ./install.sh
+    - npm ci
+  artifacts:
+    paths: [dist/]

@@ -120,6 +120,65 @@ without it the annotation is inert, which is an easily missed real finding.
 ASP.NET: `[Authorize]`, `[AllowAnonymous]` overrides, the fallback policy (default-allow is the
 systemic finding), `.RequireAuthorization()` vs bare `MapGet`.
 
+## Rust
+
+Sinks: `Command::new("sh")` / `.arg(...)` (a shell re-parses every argument), `format!`-built
+`query`/`execute` strings (values become SQL syntax), `File::open(format!(...))` and
+`fs::read_to_string` on an interpolated path. `unwrap()` on a parsed path is an availability issue,
+not a traversal: do not report it as one. Async web frameworks (`axum`, `actix-web`) resolve routes
+through macros, so route discovery is a stated gap there rather than an empty list.
+
+## C / C++
+
+Sinks: `system`, `popen`, `execl*`/`execv*` with a non-literal argument; `rand()`/`random()` used for
+a token, session id or salt. A `system("date")` call with a literal is not a finding. Memory-safety
+defects (`strcpy`, `sprintf`, off-by-one) are a different taxonomy from the injection classes here
+and are left to a compiler-backed scanner (`gcc -fanalyzer`, `clang --analyze`, `semgrep`) — the
+report says so instead of pretending pattern matching covers them.
+
+## Swift
+
+Sinks: `Process()`/`NSTask` with `executableURL`/`launchPath` set to `/bin/sh` and arguments built by
+interpolation; string-interpolated SQL. Prefer `Process` with an argument vector in any remediation.
+
+## Kotlin (and other JVM languages)
+
+Kotlin calls the same JDK classes as Java, so the JVM rules apply verbatim: `prepareStatement("..." +
+x)`, `Runtime.getRuntime().exec(...)`, `ObjectInputStream`, `MessageDigest.getInstance("MD5")`,
+`Paths.get(request.getParameter(...))`. Scala and Clojure are inventoried but have no rules — a
+stated gap, not a clean result.
+
+## Shell
+
+Sinks: `eval "$var"`, `curl … | sh`, a fixed `/tmp` path written without exclusive create. `set -e`
+and `set -u` are hygiene, not a sink guard. A download that is written to a file, digest-checked and
+then executed by path is the remediation, not a finding.
+
+## PowerShell
+
+Sinks: `Invoke-Expression`/`iex` on a variable, `DownloadString(...) | iex`, `-ExecutionPolicy
+Bypass` in a bootstrap. Check for signed-script policy and `Get-FileHash` verification before
+reporting a download as remote code execution.
+
+## SQL files
+
+`EXEC ... xp_cmdshell` is a shell escape and is reported. Querying the `xp_cmdshell` configuration
+setting is not. `GRANT ALL … TO PUBLIC` and similar privilege statements are reviewed by hand —
+there is no rule for them, so say so rather than implying the file is clean.
+
+## Infrastructure: CloudFormation, Ansible, Compose, GitLab CI, Jenkins
+
+* **CloudFormation** — `AccessControl: PublicRead*`, `CidrIp: 0.0.0.0/0`, `Effect: Allow` with
+  `Action: "*"`, `StorageEncrypted: false`.
+* **Ansible** — `validate_certs: no`, `shell:`/`command:` fed a `{{ template }}`, `mode: 0777`.
+  Prefer `argv:` and `checksum:` in any remediation.
+* **docker-compose / Helm** — `/var/run/docker.sock` mounted, `network_mode: host`, floating
+  `:latest` tags, `privileged: true`.
+* **GitLab CI / Jenkins** — `curl … | sh` in a `script:`/`sh` step, floating images. A pipeline step
+  that pins an image digest and verifies a download is the remediation.
+* Classification follows the path: a `cloudformation/` directory or a `.gitlab-ci.yml` file name is
+  what makes these files infrastructure. A subtree scanned as the repository root loses that label.
+
 ## Cross-language notes
 
 * **Reflection/DI-resolved routes** defeat static route discovery. Record the limitation in coverage

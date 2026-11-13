@@ -708,7 +708,8 @@ CATEGORY_META: Dict[str, Dict[str, Any]] = {
 }
 
 #: Pseudo-languages used by rules that match file *kinds* rather than code.
-IAC_LANGUAGES = ("dockerfile", "kubernetes", "terraform", "github-actions", "yaml", "hcl")
+IAC_LANGUAGES = ("dockerfile", "kubernetes", "terraform", "github-actions", "yaml", "hcl",
+                 "cloudformation", "groovy")
 CONFIG_LANGUAGES = ("yaml", "json", "toml", "ini", "dotenv", "config", "xml", "properties")
 
 
@@ -887,7 +888,10 @@ RULES: List[Dict[str, Any]] = [
           confidence="HIGH"),
     _rule("java-sql-concat", "sql_injection", "SQL statement composed with + concatenation",
           (("java", r"""(?:createQuery|createNativeQuery|prepareStatement|executeQuery|"""
-                     r"""executeUpdate|execute)\s*\(\s*["'][^"\n]*"\s*\+"""),),
+                     r"""executeUpdate|execute)\s*\(\s*["'][^"\n]*"\s*\+"""),
+           # Kotlin uses the same JDBC/JPA APIs; the pattern is a JDK one, not syntax sugar.
+           ("kotlin", r"""(?:createQuery|createNativeQuery|prepareStatement|executeQuery|"""
+                       r"""executeUpdate|execute)\s*\(\s*["'][^"\n]*"\s*\+""")),
           "A JPA/JDBC call receives a statement built by string concatenation.",
           confidence="HIGH"),
     _rule("cs-sql-concat", "sql_injection", "SQL statement composed by interpolation",
@@ -956,7 +960,8 @@ RULES: List[Dict[str, Any]] = [
           "protection.",
           confidence="HIGH"),
     _rule("cmd-java-runtime", "command_injection", "Runtime.exec with composed command",
-          (("java", r"""Runtime\.getRuntime\(\)\.exec\s*\(\s*[^)\n]*(?:\+|String\.format)"""),),
+          (("java", r"""Runtime\.getRuntime\(\)\.exec\s*\(\s*[^)\n]*(?:\+|String\.format)"""),
+           ("kotlin", r"""Runtime\.getRuntime\(\)\.exec\s*\(\s*[^)\n]*(?:\+|String\.format)""")),
           "A command line is assembled by concatenation and passed to the shell-aware Runtime.exec.",
           confidence="HIGH"),
     _rule("cmd-cs-process", "command_injection", "Process.Start with cmd.exe or composed arguments",
@@ -1069,6 +1074,8 @@ RULES: List[Dict[str, Any]] = [
                   r"""\$_(?:GET|POST|REQUEST|COOKIE)"""),
            ("java", r"""(?:new\s+File|Paths\.get|Files\.(?:readAllBytes|newInputStream))\s*\([^)\n]*"""
                     r"""getParameter"""),
+           ("kotlin", r"""(?:new\s+File|Paths\.get|Files\.(?:readAllBytes|newInputStream))\s*\([^)\n]*"""
+                      r"""getParameter"""),
            ("csharp", r"""File\.(?:ReadAllText|ReadAllBytes|OpenRead|WriteAllText)\s*\([^)\n]*Request""")),
           "A caller-controlled value is joined into a filesystem path with no canonicalisation call "
           "on the line.",
@@ -1150,6 +1157,8 @@ RULES: List[Dict[str, Any]] = [
            ("ruby", r"""Digest::(?:MD5|SHA1)\.(?:hexdigest|digest)[^\n]*(?:password|passwd)"""),
            ("java", r"""MessageDigest\.getInstance\s*\(\s*["'](?:MD5|SHA-?1)["']\s*\)[^\n]*"""
                     r"""(?:password|passwd)"""),
+           ("kotlin", r"""MessageDigest\.getInstance\s*\(\s*["'](?:MD5|SHA-?1)["']\s*\)[^\n]*"""
+                      r"""(?:password|passwd)"""),
            ("csharp", r"(?:MD5|SHA1)\.Create\(\)|FormsAuthentication\.HashPasswordForStoringInConfigFile"),
            ("go", r"""\b(?:md5|sha1)\.(?:New|Sum)\b[^\n]*(?:password|passwd)""")),
           "A password is hashed with a general-purpose digest, which is far too fast to resist "
@@ -1336,6 +1345,7 @@ RULES: List[Dict[str, Any]] = [
            ("ruby", r"""Marshal\.(?:load|restore)\b|YAML\.load\s*\((?![^)]*safe)"""),
            ("php", r"""\bunserialize\s*\(\s*\$"""),
            ("java", r"""new\s+ObjectInputStream|readObject\s*\(\s*\)|XStream\(\)\.fromXML"""),
+           ("kotlin", r"""new\s+ObjectInputStream|readObject\s*\(\s*\)"""),
            ("csharp", r"""BinaryFormatter|LosFormatter|NetDataContractSerializer|TypeNameHandling\.All"""),
            ("go", r"""\bgob\.NewDecoder\(""")),
           "A native object format is used on data that crosses a trust boundary.",
@@ -1546,7 +1556,8 @@ CONFIG_RULES: List[Dict[str, Any]] = [
     _rule("k8s-caps", "kubernetes_security", "All capabilities added or hostPort exposed",
           (("yaml", r"""(?mi)^\s*(?:-\s*ALL\s*$|add\s*:\s*\[\s*["']?ALL)"""),
            ("kubernetes", r"""(?mi)^\s*(?:-\s*ALL\s*$|add\s*:\s*\[\s*["']?ALL)""")),
-          "The container is granted every Linux capability.", confidence="MEDIUM", max_per_file=10),
+          "The container is granted every Linux capability.", confidence="MEDIUM", max_per_file=10,
+          context=r"""(?mi)^\s*(?:cap_add|capabilities)\s*:"""),
 
     # ----------------------------------------------------------- Terraform --
     _rule("tf-public-bucket", "iac_misconfiguration", "Storage made public",
@@ -1590,6 +1601,139 @@ CONFIG_RULES: List[Dict[str, Any]] = [
            , ("yaml", r"""(?mi)^\s*(?:-\s*)?run\s*:.*\$\{\{\s*secrets\.""")),
           "A secret is echoed into the job log, which is retained and often readable by more "
           "people than the secret itself.", confidence="HIGH", max_per_file=10),
+
+    # ------------------------------------------------- Rust / C / C++ / Swift -- #
+    # These languages were inventoried and then skipped: the table stopped at the
+    # application languages the fixture corpus happened to use. Each rule below
+    # names the one sink the language makes dangerous and reuses the existing
+    # category vocabulary, so no new taxonomy entry is needed. Where a language
+    # has no request-derived source the engines recognise, the pattern itself
+    # demands a variable argument, which is why it is not marked ``needs_source``.
+    _rule("rust-command-shell", "command_injection", "Subprocess started through a shell",
+          (("rust", r"""Command\s*::\s*new\s*\(\s*["'](?:sh|bash|/bin/sh|/bin/bash|cmd(?:\.exe)?)["']"""),),
+          "A subprocess goes through a shell, so every argument it receives is re-parsed as shell "
+          "syntax.", severity="Medium", confidence="MEDIUM"),
+    _rule("rust-sql-format", "sql_injection", "Query built with format!",
+          (("rust", r"""(?:query|query_as|query_row|query_scalar|execute|prepare)\s*\(\s*&?\s*"""
+                   r"""format!\s*\("""),),
+          "The statement is assembled with format!, so the interpolated values are part of the SQL "
+          "syntax.", confidence="HIGH"),
+    _rule("rust-path-traversal", "path_traversal", "Filesystem path built with format!",
+          (("rust", r"""(?:File\s*::\s*(?:open|create)|fs\s*::\s*(?:read|write|read_to_string)|"""
+                   r"""read_to_string)\s*\(\s*&?\s*format!\s*\("""),),
+          "A path is interpolated and opened directly, so a value containing ../ escapes the "
+          "intended directory.", severity="Medium", confidence="MEDIUM"),
+    _rule("c-command-exec", "command_injection", "Shell started with a variable command",
+          (("c", r"""\b(?:system|popen|execl|execlp|execv|execvp)\s*\(\s*[A-Za-z_]\w*"""),
+           ("cpp", r"""\b(?:std\s*::\s*system|system|popen)\s*\(\s*[A-Za-z_]\w*""")),
+          "A shell is started with a command that is not a literal, so the caller controls the "
+          "shell syntax.", confidence="MEDIUM", max_per_file=10),
+    _rule("c-weak-random-token", "weak_randomness", "Token built from rand()",
+          (("c", r"""(?i)\b\w*(?:token|secret|session|nonce|otp|salt)\w*\s*=\s*(?:rand|random)\s*\("""),
+           ("cpp", r"""(?i)\b\w*(?:token|secret|session|nonce|otp|salt)\w*\s*=\s*(?:rand|random)\s*\(""")),
+          "rand()/random() is a predictable generator with a small state, so a token or session "
+          "identifier built from it can be guessed.", confidence="HIGH", max_per_file=10),
+    _rule("swift-command-shell", "command_injection", "Process or NSTask run through a shell",
+          (("swift", r"""(?:launchPath|executableURL)\s*=\s*(?:URL\s*\(\s*fileURLWithPath\s*:\s*)?"""
+                     r"""["']/(?:bin/)?(?:sh|bash|zsh)["']"""),),
+          "A shell is launched as the executable, so the arguments it is given are evaluated as "
+          "shell syntax.", severity="Medium", confidence="MEDIUM"),
+    _rule("swift-sql-interpolation", "sql_injection", "SQL string built by interpolation",
+          (("swift", r"""(?:execute|query|prepare)\s*\(\s*"[^"\n]*\\\("""),),
+          "A statement or query is built with Swift string interpolation instead of bound "
+          "parameters.", confidence="HIGH"),
+    _rule("sql-xp-cmdshell", "command_injection", "SQL Server shell escape invoked",
+          (("sql", r"""(?i)\bEXEC(?:UTE)?\s+(?:master\s*\.\s*\.\s*)?xp_cmdshell\b"""),),
+          "xp_cmdshell runs operating-system commands from SQL, so any injection into a statement "
+          "that reaches it is remote code execution. Merely querying the xp_cmdshell setting is "
+          "not this finding.", severity="High", confidence="HIGH", max_per_file=5),
+
+    # ------------------------------------------------- Shell and PowerShell -- #
+    _rule("sh-eval-variable", "code_injection", "eval of a variable",
+          (("shell", r"""(?m)^[^#\n]*\beval\b[^\n]*\$"""),),
+          "eval re-parses its argument, so a value that reaches it becomes code.",
+          confidence="HIGH", max_per_file=10),
+    _rule("sh-curl-pipe-shell", "code_injection", "Remote script piped into a shell",
+          (("shell", r"""(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:ba|z|k)?sh\b"""),
+           ("dockerfile", r"""(?mi)^\s*RUN\b[^\n]*(?:curl|wget)\b[^|\n]*\|\s*(?:ba)?sh\b""")),
+          "Content fetched over the network is executed without an integrity check, so whoever "
+          "controls the URL controls the code that runs.", confidence="HIGH", max_per_file=10),
+    _rule("sh-predictable-temp", "race_condition", "Predictable temporary path",
+          (("shell", r"""(?m)(?:>|mktemp\s+-u)[^\n]*/tmp/[A-Za-z0-9_.-]+\b(?!\$)"""),),
+          "A fixed path under /tmp is written without creating it exclusively, so another local "
+          "process can pre-create or swap it.", severity="Medium", confidence="LOW",
+          max_per_file=5),
+    _rule("ps-invoke-expression", "code_injection", "Invoke-Expression on a variable",
+          (("powershell", r"""(?i)\bInvoke-Expression\b[^\n]*\$|\biex\s*\(?\s*\$"""),),
+          "Invoke-Expression executes its argument as PowerShell, so any value that reaches it "
+          "becomes code.", confidence="HIGH", max_per_file=10),
+    _rule("ps-download-execute", "code_injection", "Downloaded script executed in place",
+          (("powershell", r"""(?i)(?:DownloadString|DownloadData|Invoke-WebRequest|iwr)\b[^\n]*\|"""
+                          r"""\s*(?:Invoke-Expression|iex)\b"""),),
+          "A remote script is piped straight into the interpreter, so the code that runs is chosen "
+          "by whoever answers the request.", confidence="HIGH", max_per_file=10),
+
+    # ---------------------------------------------- CloudFormation / Ansible -- #
+    # Keyed on ``iac`` rather than ``yaml``/``json`` on purpose. The inventory
+    # labels an infrastructure file by its *language*, and a yaml file under an
+    # ``ansible/`` or ``k8s/`` directory is labelled ``kubernetes`` -- so a rule
+    # tied to one label silently skips the others, which is how a CloudFormation
+    # template could sit in the corpus and match nothing at all.
+    _rule("cfn-public-access", "iac_misconfiguration", "Storage or snapshot made public",
+          (("iac", r"""(?mi)^\s*["']?(?:AccessControl|access_control)["']?\s*:\s*["']?"""
+                    r"""(?:PublicReadWrite|PublicRead|public-read-write|public-read|publicRead)"""),),
+          "The template grants public access at the resource level, so the objects are readable (or "
+          "writable) by anyone with the URL.", confidence="HIGH"),
+    _rule("cfn-open-ingress", "iac_misconfiguration", "Security group open to the internet",
+          (("iac", r"""(?mi)["']?(?:CidrIp|CidrIpv6)["']?\s*:\s*["']?(?:0\.0\.0\.0/0|::/0)"""),),
+          "An ingress rule admits every source address.", confidence="HIGH"),
+    _rule("cfn-wildcard-iam", "iac_misconfiguration", "IAM policy allows every action",
+          (("iac", r"""(?ms)["']?Effect["']?\s*:\s*["']?Allow["']?[\s\S]{0,300}?"""
+                    r"""["']?Action["']?\s*:\s*\[?\s*["']?\*"""),),
+          "The policy statement allows every action, so a principal holding it is effectively an "
+          "administrator.", confidence="HIGH", max_per_file=10),
+    _rule("cfn-no-encryption", "iac_misconfiguration", "Encryption explicitly disabled",
+          (("iac", r"""(?mi)^\s*["']?(?:StorageEncrypted|Encrypted|Encryption)["']?\s*:\s*"""
+                    r"""["']?false"""),),
+          "The resource is declared without encryption at rest.", confidence="HIGH"),
+    _rule("ansible-no-cert-check", "tls_verification_disabled", "TLS verification disabled",
+          (("iac", r"""(?mi)^\s*validate_certs\s*:\s*(?:no|false)\s*$"""),),
+          "The task accepts any certificate, so an attacker on the path can impersonate the "
+          "server.", confidence="HIGH"),
+    _rule("ansible-templated-command", "command_injection", "Command module fed a template",
+          (("iac", r"""(?mi)^\s*(?:shell|command|raw)\s*:\s*[^\n]*\{\{"""),),
+          "The command is assembled from a variable at run time, so the value becomes part of the "
+          "command line.", severity="Medium", confidence="MEDIUM", max_per_file=10),
+    _rule("ansible-world-writable", "iac_misconfiguration", "World-writable file mode",
+          (("iac", r"""(?mi)^\s*mode\s*:\s*["']?0?777["']?\s*$"""),),
+          "A file or directory is created world-writable, so any local user can modify it.",
+          severity="Medium", confidence="HIGH"),
+
+    # ------------------------------------------------- Compose / Helm / CI ---- #
+    _rule("compose-docker-socket", "container_security", "Docker socket mounted into a container",
+          (("iac", r"""(?m)^\s*-\s*["']?/var/run/docker\.sock"""),),
+          "Mounting the daemon socket gives the container control of the host's Docker, which is "
+          "equivalent to root on that host.", confidence="HIGH"),
+    _rule("compose-host-network", "container_security", "Container shares the host network",
+          (("iac", r"""(?mi)^\s*network_mode\s*:\s*["']?host"""),),
+          "The container has no network isolation, so it can reach host-only services and bind "
+          "privileged ports.", severity="Medium", confidence="HIGH"),
+    _rule("iac-floating-image", "container_security", "Image tag is latest or absent",
+          (("iac", r"""(?mi)^\s*image\s*:\s*["']?[\w.\-/]+:latest["']?\s*$"""),),
+          "A floating tag means the deployed image can change without a change to the manifest, so "
+          "the same commit can run different code tomorrow.", severity="Low",
+          confidence="HIGH", max_per_file=10),
+    _rule("gitlab-ci-shell-pipe", "cicd_permissions", "Remote script piped into a shell in CI",
+          (("iac", r"""(?mi)^\s*-?\s*(?:-\s*)?(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:ba)?sh\b"""),),
+          "A pipeline step executes content fetched at run time, so a compromised or spoofed "
+          "endpoint runs code with the runner's credentials.", confidence="HIGH", max_per_file=10),
+    _rule("jenkins-shell-pipe", "cicd_permissions", "Remote script piped into a shell in a job",
+          (("iac", r"""(?m)\bsh\s*\(?\s*["'][^"'\n]*(?:curl|wget)\b[^"'\n]*\|\s*(?:ba)?sh"""),),
+          "The build executes content fetched at run time with the agent's credentials.",
+          confidence="HIGH", max_per_file=10),
+    _rule("tf-wildcard-iam", "iac_misconfiguration", "IAM policy allows every action",
+          (("terraform", r'''(?ms)actions\s*=\s*\[\s*"\*"\s*\][\s\S]{0,200}?resources\s*=\s*\[?\s*"\*"'''),),
+          "The policy grants every action on every resource.", confidence="HIGH"),
 ]
 
 RULES.extend(CONFIG_RULES)

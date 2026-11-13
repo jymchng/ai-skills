@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Orders platform stack, secure mirror image of the vulnerable one.
+Resources:
+  OrdersBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+  OrdersDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      StorageEncrypted: true
+  ReportsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+        - PolicyName: read-orders
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${OrdersBucket}/reports/*"
+  WebTier:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: web tier
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/16

@@ -6,6 +6,14 @@ model — and what the audit claims when the tool is absent.
 The built-in analyzers always run. External tools are **accelerators**: they raise coverage and
 confidence, they never become a dependency.
 
+**Built-in coverage envelope (97 rules, 40 categories).** Application code: Python,
+JavaScript/TypeScript, Go, Ruby, PHP, Java, Kotlin, C#, Rust, Swift, C/C++, shell, PowerShell and
+`.sql`. Infrastructure and configuration: `Dockerfile`, Kubernetes, Helm values, Terraform,
+CloudFormation, Ansible, docker-compose, GitLab CI, Jenkinsfile, GitHub Actions, `.env`, JSON, INI,
+YAML. Rules for the newer languages name the one sink that language makes dangerous and carry
+MEDIUM confidence, because the dataflow engines only exist for the seven original languages — that
+is a coverage fact worth stating in the report, not a reason to stay silent.
+
 ## 1. Availability probing
 
 For each tool: resolve the binary on `PATH`, run `<tool> --version` (timeout 10 s), parse the

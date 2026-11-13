@@ -10,31 +10,41 @@
   },
   "corpora": {
     "vulnerable-app": {
-      "files": 25,
-      "findings": 120,
-      "categories": 23,
+      "files": 36,
+      "findings": 152,
+      "categories": 27,
       "languages": [
+        "c",
+        "cloudformation",
         "csharp",
         "dockerfile",
         "github-actions",
         "go",
         "gomod",
+        "groovy",
         "java",
         "javascript",
         "json",
+        "kotlin",
         "kubernetes",
         "markdown",
         "php",
+        "powershell",
         "python",
         "ruby",
+        "rust",
+        "shell",
+        "sql",
+        "swift",
         "terraform",
         "text",
         "typescript",
-        "xml"
+        "xml",
+        "yaml"
       ]
     },
     "secure-app": {
-      "files": 24,
+      "files": 36,
       "findings": 6,
       "expected": 0,
       "known_false_positives": 6
@@ -47,7 +57,7 @@
       "detector": "builtin_analyzers",
       "requires": [],
       "vulnerable": {
-        "findings": 7,
+        "findings": 10,
         "files": [
           {
             "path": "dotnet/OrdersController.cs",
@@ -63,6 +73,12 @@
           },
           {
             "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "java-sql-concat"
+            ]
+          },
+          {
+            "path": "kotlin/Orders.kt",
             "rule_ids": [
               "java-sql-concat"
             ]
@@ -90,6 +106,18 @@
             "rule_ids": [
               "rb-sql-concat"
             ]
+          },
+          {
+            "path": "rust/src/main.rs",
+            "rule_ids": [
+              "rust-sql-format"
+            ]
+          },
+          {
+            "path": "swift/Report.swift",
+            "rule_ids": [
+              "swift-sql-interpolation"
+            ]
           }
         ],
         "assert": "at least one finding, and at least one in every listed file"
@@ -115,10 +143,28 @@
       "detector": "builtin_analyzers",
       "requires": [],
       "vulnerable": {
-        "findings": 4,
+        "findings": 10,
         "files": [
           {
+            "path": "ansible/playbook.yaml",
+            "rule_ids": [
+              "ansible-templated-command"
+            ]
+          },
+          {
+            "path": "c/tool.c",
+            "rule_ids": [
+              "c-command-exec"
+            ]
+          },
+          {
             "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "cmd-java-runtime"
+            ]
+          },
+          {
+            "path": "kotlin/Orders.kt",
             "rule_ids": [
               "cmd-java-runtime"
             ]
@@ -139,6 +185,24 @@
             "path": "ruby/app/controllers/orders_controller.rb",
             "rule_ids": [
               "cmd-ruby"
+            ]
+          },
+          {
+            "path": "rust/src/main.rs",
+            "rule_ids": [
+              "rust-command-shell"
+            ]
+          },
+          {
+            "path": "sql/admin.sql",
+            "rule_ids": [
+              "sql-xp-cmdshell"
+            ]
+          },
+          {
+            "path": "swift/Report.swift",
+            "rule_ids": [
+              "swift-command-shell"
             ]
           }
         ],
@@ -260,7 +324,7 @@
       "detector": "builtin_analyzers",
       "requires": [],
       "vulnerable": {
-        "findings": 6,
+        "findings": 8,
         "files": [
           {
             "path": "dotnet/OrdersController.cs",
@@ -281,6 +345,12 @@
             ]
           },
           {
+            "path": "kotlin/Orders.kt",
+            "rule_ids": [
+              "path-traversal"
+            ]
+          },
+          {
             "path": "node/src/orders.ts",
             "rule_ids": [
               "path-traversal"
@@ -296,6 +366,12 @@
             "path": "ruby/app/controllers/orders_controller.rb",
             "rule_ids": [
               "path-traversal"
+            ]
+          },
+          {
+            "path": "rust/src/main.rs",
+            "rule_ids": [
+              "rust-path-traversal"
             ]
           }
         ],
@@ -605,10 +681,16 @@
       "detector": "builtin_analyzers",
       "requires": [],
       "vulnerable": {
-        "findings": 5,
+        "findings": 6,
         "files": [
           {
             "path": "dotnet/OrdersController.cs",
+            "rule_ids": [
+              "weak-password-hash"
+            ]
+          },
+          {
+            "path": "kotlin/Orders.kt",
             "rule_ids": [
               "weak-password-hash"
             ]
@@ -659,7 +741,7 @@
       "detector": "builtin_analyzers",
       "requires": [],
       "vulnerable": {
-        "findings": 8,
+        "findings": 9,
         "files": [
           {
             "path": "dotnet/OrdersController.cs",
@@ -675,6 +757,12 @@
           },
           {
             "path": "java/src/main/java/example/invalid/Orders.java",
+            "rule_ids": [
+              "unsafe-deserialization"
+            ]
+          },
+          {
+            "path": "kotlin/Orders.kt",
             "rule_ids": [
               "unsafe-deserialization"
             ]
@@ -869,8 +957,22 @@
       "detector": "builtin_analyzers",
       "requires": [],
       "vulnerable": {
-        "findings": 6,
+        "findings": 11,
         "files": [
+          {
+            "path": "ci/.gitlab-ci.yml",
+            "rule_ids": [
+              "iac-floating-image"
+            ]
+          },
+          {
+            "path": "compose/docker-compose.yml",
+            "rule_ids": [
+              "compose-docker-socket",
+              "compose-host-network",
+              "iac-floating-image"
+            ]
+          },
           {
             "path": "infra/Dockerfile",
             "rule_ids": [
@@ -883,7 +985,8 @@
           {
             "path": "infra/k8s/deployment.yaml",
             "rule_ids": [
-              "docker-privileged"
+              "docker-privileged",
+              "iac-floating-image"
             ]
           }
         ],
@@ -903,7 +1006,7 @@
       "detector": "builtin_analyzers",
       "requires": [],
       "vulnerable": {
-        "findings": 4,
+        "findings": 6,
         "files": [
           {
             "path": ".github/workflows/ci.yml",
@@ -912,6 +1015,18 @@
               "ci-secret-echo",
               "ci-unpinned-action",
               "ci-write-all"
+            ]
+          },
+          {
+            "path": "ci/.gitlab-ci.yml",
+            "rule_ids": [
+              "gitlab-ci-shell-pipe"
+            ]
+          },
+          {
+            "path": "ci/Jenkinsfile",
+            "rule_ids": [
+              "jenkins-shell-pipe"
             ]
           }
         ],
@@ -1029,7 +1144,7 @@
   "totals": {
     "required_classes": 20,
     "classes_detected": 20,
-    "vulnerable_findings": 120,
+    "vulnerable_findings": 152,
     "secure_findings": 6
   }
 }

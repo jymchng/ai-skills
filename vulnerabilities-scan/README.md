@@ -1,7 +1,7 @@
 # vulnerabilities-scan
 
 A Claude Code skill for repository-wide security audits: it inventories a repository, maps its
-attack surface, runs 71 built-in detection rules plus any external scanners that are installed,
+attack surface, runs 97 built-in detection rules plus any external scanners that are installed,
 validates every candidate against the actual code, scores what survives with CVSS 4.0, and renders
 one findings dataset as Markdown, HTML, PDF and per-finding JSON.
 
@@ -62,8 +62,8 @@ python3 scripts/scanner_orchestrator.py --list-tools     # the matrix above, as 
 the tickets, and records the PDF as `unavailable` with the exact reason (missing binary versus LaTeX
 error with the log tail). A missing PDF is never a fabricated file.
 
-**Tested on.** Python 3.13.13 with no network and no external scanners installed; 307 tests pass
-(≈40 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
+**Tested on.** Python 3.13.13 with no network and no external scanners installed; 316 tests pass
+(≈55 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
 verified interpreter and 3.8 as a documented floor, not a promise.
 
 ---
@@ -220,7 +220,7 @@ article count and the dataset count legitimately differ.
 
 ## 6. Capabilities
 
-**Built-in detection — 71 rules across 40 categories, no installation.** The rule inventory is
+**Built-in detection — 97 rules across 40 categories, no installation.** The rule inventory is
 data, not prose:
 
 ```bash
@@ -234,8 +234,10 @@ authorization, JWT validation, session handling, rate limiting; business-logic a
 patterns; security headers, CORS, debug mode, fail-open error handling; vulnerable and unpinned
 dependencies; Dockerfile, Kubernetes, Terraform and GitHub Actions configuration.
 
-File types with rule coverage: Python, JavaScript/TypeScript, Go, Ruby, PHP, Java, C#,
-`Dockerfile`, Kubernetes YAML, Terraform, GitHub Actions workflows, `.env`, JSON, INI, YAML.
+File types with rule coverage: Python, JavaScript/TypeScript, Go, Ruby, PHP, Java, Kotlin, C#,
+Rust, Swift, C/C++, shell, PowerShell, SQL, `Dockerfile`, Kubernetes YAML, Helm values,
+Terraform, CloudFormation, Ansible playbooks, docker-compose, GitLab CI, Jenkinsfiles, GitHub
+Actions workflows, `.env`, JSON, INI, YAML.
 
 **Beyond pattern matching.** Each stage feeds the next, so later stages can reason with context
 instead of guessing: routes and auth mechanisms from stage 2 decide which authorization rules are
@@ -346,11 +348,12 @@ State these in the report, not just in this file.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q          # 307 tests, ~40 s, offline, writes only under .scratch/
+python3 -m pytest tests -q          # 316 tests, ~55 s, offline, writes only under .scratch/
 ```
 
-- `tests/fixtures/vulnerable-app/` — 24 files covering the 20 required vulnerability classes across
-  Python, JavaScript/TypeScript, Go, Ruby, PHP, Java, C#, Dockerfile, Kubernetes, Terraform and
+- `tests/fixtures/vulnerable-app/` — 34 files covering the 20 required vulnerability classes across
+  Python, JavaScript/TypeScript, Go, Ruby, PHP, Java, Kotlin, C#, Rust, Swift, C, shell, PowerShell,
+  SQL, Dockerfile, Kubernetes, Terraform, CloudFormation, Ansible, Compose, GitLab CI, Jenkins and
   GitHub Actions.
 - `tests/fixtures/secure-app/` — the same shapes, correctly implemented, with every file
   byte-different from its vulnerable twin.

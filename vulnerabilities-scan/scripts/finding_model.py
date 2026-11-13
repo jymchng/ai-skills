@@ -351,10 +351,19 @@ _COMMENT_MARKERS: Dict[str, Tuple[str, ...]] = {
     "javascript": ("//",), "typescript": ("//",), "go": ("//",), "java": ("//",),
     "csharp": ("//",), "kotlin": ("//",), "rust": ("//",), "swift": ("//",),
     "c": ("//",), "cpp": ("//",), "protobuf": ("//",),
+    # Languages the rule table now covers, each with its own comment syntax. A
+    # missing entry is not cosmetic: ``-- comment`` in SQL or ``# note`` in a
+    # PowerShell script would stay visible to the rules and a commented-out
+    # command would be reported as live code.
+    "scala": ("//",), "groovy": ("//",),
+    "powershell": ("#",), "toml": ("#",), "ini": (";", "#"), "hcl": ("#", "//"),
+    "elixir": ("#",), "perl": ("#",), "r": ("#",), "lua": ("--",), "sql": ("--",),
 }
 #: Languages with no ``/* ... */`` form (or where it is not a comment).
 _NO_BLOCK_COMMENT = frozenset({"python", "ruby", "graphql", "yaml", "dockerfile",
-                               "shell", "bash", "text", "markdown", "json"})
+                               "shell", "bash", "text", "markdown", "json",
+                               "powershell", "toml", "ini", "elixir", "perl", "r",
+                               "sql", "lua"})
 #: Languages that also use the backtick as a string delimiter.
 _BACKTICK_LANGS = frozenset({"javascript", "typescript", "go", "terraform", "shell"})
 

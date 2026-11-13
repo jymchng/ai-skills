@@ -237,6 +237,11 @@ IAC_FILE_RE = re.compile(r"(^Dockerfile|\.dockerfile$|^Containerfile|\.tf$|\.tfv
                          r"|^serverless\.ya?ml$|^template\.ya?ml$|^ansible\.cfg$)", re.IGNORECASE)
 IAC_DIR_RE = re.compile(r"(^|/)(k8s|kubernetes|kube|helm|charts|terraform|deploy|deployment"
                         r"|manifests|infrastructure|infra|ansible|playbooks)(/|$)", re.IGNORECASE)
+#: Directories that hold CloudFormation templates. Checked before ``IAC_DIR_RE`` so
+#: a template is labelled ``cloudformation`` instead of inheriting the generic
+#: ``kubernetes`` label that directory merely implies.
+CFN_DIR_RE = re.compile(r"(^|/)(cloudformation|cfn|cfn-templates|cloudformation-templates"
+                        r"|stacks)(/|$)", re.IGNORECASE)
 WORKFLOW_RE = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$", re.IGNORECASE)
 CI_FILE_RE = re.compile(r"(^\.gitlab-ci\.yml$|^\.travis\.yml$|^Jenkinsfile$|^azure-pipelines\.yml$"
                         r"|^\.circleci/config\.yml$|^bitbucket-pipelines\.yml$|^\.drone\.yml$)",
@@ -396,11 +401,18 @@ def classify(relpath: str, filename: str) -> Tuple[str, Optional[str]]:
         return "iac", "terraform"
     if filename in ("Chart.yaml", "Chart.lock", "kustomization.yaml", "kustomization.yml"):
         return "iac", "kubernetes"
+    if CFN_DIR_RE.search(relpath) and _ext(filename) in (".yml", ".yaml", ".json"):
+        return "iac", "cloudformation"
     if IAC_FILE_RE.search(filename):
         return "iac", language or "yaml"
     if IAC_DIR_RE.search(relpath) and _ext(filename) in (".yml", ".yaml", ".json"):
         return "iac", "kubernetes"
-    if CI_FILE_RE.search(relpath):
+    # Matched on the *file name*, not the path: ``CI_FILE_RE`` is anchored with
+    # ``^...$``, so testing it against ``ci/.gitlab-ci.yml`` never matched and the
+    # file fell through to ``config`` -- where the CI rules, keyed on the iac
+    # bucket, could not see it. A pipeline file in a subdirectory is still a
+    # pipeline file.
+    if CI_FILE_RE.search(filename):
         return "iac", language or "yaml"
 
     for regex, kind, _eco in _MANIFEST_RES:

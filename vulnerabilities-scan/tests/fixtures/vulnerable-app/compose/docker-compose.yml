@@ -1,0 +1,8 @@
+services:
+  api:
+    image: example/api:latest
+    network_mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8080:8080"

@@ -1,0 +1,16 @@
+- name: Provision the orders host
+  hosts: orders
+  become: true
+  tasks:
+    - name: Download the release tarball
+      get_url:
+        url: https://example.invalid/release.tgz
+        dest: /srv/release.tgz
+        validate_certs: no
+    - name: Run the packaged installer
+      shell: "/srv/install.sh {{ release_channel }}"
+    - name: Create the release directory
+      file:
+        path: /srv/release
+        state: directory
+        mode: 0777
