@@ -585,9 +585,18 @@ def _tool(
     version_args: Sequence[str] = ("--version",),
     parsers: Sequence[str] = ("json",),
     notes: str = "",
+    binary: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Describe one external tool.
+
+    ``binary`` exists because a tool's name is not always the executable it
+    needs: ``npm audit`` is a subcommand of ``npm``, and probing for a binary
+    literally called ``npm-audit`` reported the tool as unavailable on every
+    machine, npm or not. Name is the label; binary is what gets resolved.
+    """
     return {
         "name": name,
+        "binary": binary or name,
         "kind": kind,
         "categories": list(categories),
         "languages": list(languages),
@@ -611,7 +620,7 @@ TOOLS: List[Dict[str, Any]] = sorted([
     _tool("gosec", "sast", categories=["injection", "crypto", "tls", "filesystem"],
           languages=["go"]),
     _tool("npm-audit", "sca", categories=["dependencies"], languages=["javascript"],
-          network=True, version_args=("--version",)),
+          network=True, version_args=("--version",), binary="npm"),
     _tool("osv-scanner", "sca", categories=["dependencies"], languages=["many"],
           network=True),
     _tool("pip-audit", "sca", categories=["dependencies"], languages=["python"],
@@ -643,8 +652,10 @@ _VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)?")
 def probe(tool: Dict[str, Any], timeout: float = 10.0) -> Dict[str, Any]:
     """Resolve the binary and run its version probe."""
     name = tool["name"]
+    binary = tool.get("binary") or name
     record: Dict[str, Any] = {
         "name": name,
+        "binary": binary,
         "kind": tool["kind"],
         "available": False,
         "path": None,
@@ -656,13 +667,13 @@ def probe(tool: Dict[str, Any], timeout: float = 10.0) -> Dict[str, Any]:
         "network": tool["network"],
         "covers": list(tool["categories"]),
     }
-    binary = shutil.which(name)
-    if not binary:
+    resolved = shutil.which(binary)
+    if not resolved:
         record["reason"] = "not found on PATH"
         return record
-    record["path"] = binary
-    argv = [binary] + list(tool["version_args"])
-    record["probe_argv"] = [name] + list(tool["version_args"])
+    record["path"] = resolved
+    argv = [resolved] + list(tool["version_args"])
+    record["probe_argv"] = [binary] + list(tool["version_args"])
     try:
         proc = subprocess.run(
             argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False,

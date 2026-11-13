@@ -17,7 +17,7 @@ rather than omitted.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q            # 316 tests
+python3 -m pytest tests -q            # 400 tests
 ```
 
 The end-to-end audit is `tests/test_end_to_end_audit.py`; it runs both fixture corpora through all
@@ -72,7 +72,7 @@ of intent.
 | 12 | Templates | `templates/report.md.j2`, `templates/report.html.j2`, `templates/report.css` | self-contained HTML, no CDN, escaped untrusted content, print styles |
 | 13 | Renderers | `scripts/generate_markdown.py`, `generate_html.py`, `generate_pdf.py`, `generate_json.py`, `generate_reports.py` | one dataset rendered to every format, plus tickets, `findings-index.json` and `report-manifest.json` |
 | 14 | Report validator | `scripts/validate_reports.py` | exit 0 with 0 problems on both corpora (section 4); `--require-pdf` escalates a missing PDF |
-| 15 | Fixtures and test suite | `tests/` | 14 test modules plus `conftest.py`, 74 fixture files (34 vulnerable-app, 34 secure-app, 2 expectation data), 316 tests |
+| 15 | Fixtures and test suite | `tests/` | 15 test modules plus `conftest.py`, 74 fixture files (34 vulnerable-app, 34 secure-app, 2 expectation data), 400 tests |
 | 16 | Research and validation record | `docs/RESEARCH.md`, `docs/RESEARCH-SOURCES.json`, `docs/VALIDATION-RESULTS.md`, `README.md` | dated sources with SHA-256 digests; this document; the human-facing install/use guide |
 
 Re-measure the inventory rather than trusting the table:
@@ -84,7 +84,7 @@ git ls-files tests/test_*.py | wc -l        # 14
 git ls-files tests/fixtures | wc -l         # 74
 for s in scripts/*.py; do python3 "$s" --help >/dev/null || echo "no --help: $s"; done
                                             # prints nothing: all 17 modules accept --help
-python3 -m pytest tests -q                  # 316 passed
+python3 -m pytest tests -q                  # 400 passed
 ```
 
 Everything after this section is measurement. This section is the inventory that measurement
@@ -95,7 +95,7 @@ attaches to.
 ## 3. Test suite
 
 ```
-316 passed in 54.68s
+400 passed in 56.42s
 ```
 
 | Test module | Tests | What it pins |
@@ -114,7 +114,8 @@ attaches to.
 | `test_detect_technologies.py` | 10 | Language/manifest/import detection |
 | `test_redaction_markers.py` | 6 | One marker spelling per credential shape, identical across all three redacting stages |
 | `test_push_protection_literals.py` | 5 | No live-credential shape anywhere in the tracked tree |
-| **Total** | **316** | |
+| `test_install_scanners.py` | 84 | Installer planning per OS, the pipx/Node bootstrap, the elevation rule, archive extraction safety, and that the wrappers delegate instead of carrying their own matrix |
+| **Total** | **400** | |
 
 Every module runs offline and writes only under `.scratch/` (git-ignored).
 
@@ -366,7 +367,7 @@ behaviour was a real precision bug in the stage this document treats as ground t
    both directions of the false-positive question, but it is not a measurement of precision on a
    production codebase. The corpora are the regression contract; production precision is unknown
    until the skill is run against real repositories.
-8. **Timings are for an idle machine** (55 s for 316 tests, ≈7 s for both corpora) and include no
+8. **Timings are for an idle machine** (≈60 s for 400 tests, ≈7 s for both corpora) and include no
    network or scanner latency, so they are a floor, not a budget.
 
 ---

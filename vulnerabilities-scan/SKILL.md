@@ -90,6 +90,12 @@ Run both layers, always:
   hard-coding one, because CLIs change (`gitleaks` v8 uses `git`/`dir` subcommands; `osv-scanner`
   v2 uses `scan source -r`). Capture version, exit code, stdout, stderr and save the raw output.
 
+An operator installs the scanners; an audit never does. `scripts/install-scanners.sh` (Linux, macOS)
+and `scripts/install-scanners.ps1` (Windows) print a per-tool plan and install nothing without
+`--yes`; `references/scanner-reference.md` §7 has the matrix and the policy. If a tool is missing,
+report it as a coverage limitation and continue — installing it mid-run would make the coverage
+section depend on what you decided to fetch.
+
 Every tool that is missing, unparseable, timed out or errored becomes an entry in the coverage
 section of the report. Never let an absent scanner read as "nothing found".
 
@@ -144,7 +150,9 @@ and writes its own, so a stage can be re-run in isolation.
 scripts/            stage helpers, one per stage: repository_inventory.py,
                     detect_technologies.py, attack_surface.py, builtin_analyzers.py,
                     scanner_orchestrator.py, finding_model.py, then dedupe,
-                    validation, scoring, report generation and verification
+                    validation, scoring, report generation and verification;
+                    plus install_scanners.py and its .sh/.ps1 launchers, which
+                    are operator tooling and never run during an audit
 schemas/            finding.schema.json — the formal contract for findings.json
 templates/          report layout for md/html, plus report.css
 references/         operational depth, loaded only when the stage needs it

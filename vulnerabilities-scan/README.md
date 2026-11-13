@@ -57,13 +57,49 @@ python3 scripts/scanner_orchestrator.py --probe-only     # availability, version
 python3 scripts/scanner_orchestrator.py --list-tools     # the matrix above, as JSON
 ```
 
+**Installing them.** The audit never installs a scanner: a run that pip-installed a tool mid-audit
+would make the coverage section depend on what the agent happened to fetch, and would modify a
+machine nobody asked it to touch. Installation is a separate, operator-driven step that prints a
+plan before it does anything:
+
+```bash
+scripts/install-scanners.sh --check          # what is here, from the audit's own probe
+scripts/install-scanners.sh                  # the plan: exact commands for this host, per tool
+scripts/install-scanners.sh --yes            # install; root steps are printed, not run
+scripts/install-scanners.sh --yes --allow-sudo      # ...or run them with sudo -n
+scripts/install-scanners.sh --yes --allow-download  # release binaries when no package covers a tool
+```
+
+On Windows (PowerShell 5.1+), the same engine behind a launcher that finds `py -3` or `python`:
+
+```powershell
+.\scripts\install-scanners.ps1 --check
+.\scripts\install-scanners.ps1              # plan
+.\scripts\install-scanners.ps1 --yes        # winget, then choco, then scoop
+```
+
+What it decides, and what it refuses to decide:
+
+| Behaviour | Why |
+| - | - |
+| Prints a plan unless `--yes` | A CI job that forgets the flag gets a readable answer, not an invisible prompt |
+| Prints root steps with `sudo` and stops there | Elevation is the operator's decision; `--allow-sudo` runs them as `sudo -n` so a missing password fails instead of hanging |
+| Bootstraps `pipx` and Node.js only | `pipx` keeps the Python tools isolated and current; `npm audit` has no alternative. Go and Ruby are used when present and never installed; gitleaks, gosec and osv-scanner have release binaries, brakeman has its gem |
+| Verifies with `scanner_orchestrator.probe` | The installer's opinion does not count, the audit's own probe does; a tool it installed but the audit cannot see is a failure (exit 1) |
+| Checks downloads against the release's checksum | `--allow-download` needs `--allow-unverified` when a project publishes no checksum, and records `verified: false` |
+| Installs downloads under `--prefix` (`~/.local/bin`) | Never over a system directory, never behind a package manager's back |
+
+`--list` prints the per-OS matrix as JSON. `references/scanner-reference.md` §7 documents the
+policy, the Debian/Fedora caveat for `trivy`, and the three PATH traps (`go install`,
+`pipx ensurepath`, `--prefix`).
+
 **Optional — PDF.** `pandoc` plus a LaTeX engine (`xelatex`) produce
 `SECURITY-AUDIT-REPORT.pdf`. Without them the run still writes Markdown, HTML, JSON, the index and
 the tickets, and records the PDF as `unavailable` with the exact reason (missing binary versus LaTeX
 error with the log tail). A missing PDF is never a fabricated file.
 
-**Tested on.** Python 3.13.13 with no network and no external scanners installed; 316 tests pass
-(≈55 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
+**Tested on.** Python 3.13.13 with no network and no external scanners installed; 400 tests pass
+(≈60 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
 verified interpreter and 3.8 as a documented floor, not a promise.
 
 ---
@@ -288,11 +324,19 @@ Everything is a flag on the stage that owns the concern; there is no config file
 | Require a PDF | `--require-pdf` | `validate_reports.py` |
 | PDF timeout / keep LaTeX build | `--timeout N`, `--keep-build`, `--workdir DIR` | `generate_pdf.py` |
 
+The installer is the one script with its own flags, because it is the one script that changes the
+machine rather than reading a repository: `--check`, `--list`, `--yes`, `--dry-run`,
+`--only`/`--skip`, `--prefix`, `--allow-sudo`, `--allow-download`, `--allow-unverified`, `--json`.
+`python3 scripts/install_scanners.py --help` is the reference; §1 explains the policy behind each.
+
 Exit codes are part of the interface: `0` means the stage did what it was asked; `1` from
 `generate_reports.py` or `generate_pdf.py` means a format failed (the others are still written and
 the manifest records which); `1` from `validate_findings.py` means a secret survived redaction and
 nothing was written; `2` means the dataset failed schema validation; `1` from `validate_reports.py`
-means the report set must not be delivered — the `problems` list says exactly what disagrees.
+means the report set must not be delivered — the `problems` list says exactly what disagrees; `1`
+from `install_scanners.py` means a requested tool is still missing after the run, and `2` that the
+request cannot be satisfied on this host (unsupported platform, or the orchestrator module is
+absent).
 
 ---
 
@@ -341,6 +385,11 @@ State these in the report, not just in this file.
 | `pyproject.toml` dependencies missing | Python < 3.11 has no `tomllib` | Run on 3.11+, or read the manifest listed in `unparsed_manifests` |
 | Findings look stale after a fix | Evidence belongs to the snapshot that was audited | Re-run from stage 1; line numbers are pinned to the snapshot commit |
 | Secrets appear in a raw scan file | Raw external tool output is preserved as evidence | Pass `--secrets-file` and check the verifier verdict; report a leak with the exact path |
+| The installer printed steps instead of running them | Root steps are printed unless `--allow-sudo`, and nothing runs without `--yes` | Re-run with `--yes`; add `--allow-sudo` if you accept `sudo -n` execution |
+| `install-scanners.sh` says no Python 3.8+ | The host has no interpreter on `PATH` | Follow the one-line install hint it prints for this distribution, or `brew install python` on macOS |
+| A tool installed but `--check` still says MISSING | `go install`, `pipx` or `--prefix` put the binary outside `PATH` | Add `$(go env GOPATH)/bin`, `~/.local/bin` or the `--prefix` directory to `PATH`, then re-run `--check` |
+| `--allow-download` refuses with "no checksum file" | The release publishes no checksum, so the archive cannot be verified | Pass `--allow-unverified` if you accept that, or install through a package manager instead |
+| `pip` refuses to install into the system Python (PEP 668) | Debian/Ubuntu mark the system interpreter as externally managed | Install `pipx` from the distribution (`apt install pipx`) and let the installer use it; do not use `--break-system-packages` |
 
 ---
 
@@ -348,7 +397,7 @@ State these in the report, not just in this file.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q          # 316 tests, ~55 s, offline, writes only under .scratch/
+python3 -m pytest tests -q          # 400 tests, ~60 s, offline, writes only under .scratch/
 ```
 
 - `tests/fixtures/vulnerable-app/` — 34 files covering the 20 required vulnerability classes across
