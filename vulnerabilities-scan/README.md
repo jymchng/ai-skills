@@ -382,6 +382,7 @@ vulnerabilities-scan/
 ├── schemas/finding.schema.json   the formal finding contract
 ├── templates/               report layout for Markdown/HTML plus report.css
 ├── tests/                   pytest suite and both fixture corpora
+├── prds/                    product requirements for future releases (not shipped in the skill)
 └── docs/                    research, sources and validation results (development material)
 ```
 
