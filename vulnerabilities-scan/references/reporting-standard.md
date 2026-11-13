@@ -64,18 +64,54 @@ them are written on every run:
 | - | - |
 | `SECURITY-AUDIT-REPORT.json` | The whole report: counts, verdict, coverage, methodology, and one ticket object per validated finding |
 | `findings.json` | The validated dataset — the authority every other artefact is derived from |
-| `findings-index.json` | The register of **every** finding: id, file, line, category, severity, confidence, priority, validation status, whether it is ticketable and why not, and the path plus SHA-256 of that finding's own file |
-| `tickets/VULN-NNN.json` | Exactly one file per finding — validated, needs-investigation and suppressed alike |
+| `findings-index.json` | The register of **every** finding: id, file, line, category, severity, confidence, priority, validation status, `disposition`, whether it is ticketable and why not, and the path plus SHA-256 of that finding's own file |
+| `findings/review-required/VULN-NNN.json` | Exactly one file per finding whose remediation a person must decide on |
+| `findings/optional-hardening/VULN-NNN.json` | Exactly one file per finding whose fix is discretionary |
+| `findings/no-action-suppressed/VULN-NNN.json` | Exactly one file per finding recorded and closed without action |
 
-Two rules make the set trustworthy:
+### One file per finding, filed under `findings/`
 
-1. **One file per finding.** No finding may be reachable only by parsing the aggregate report.
-   Actionability is carried *inside* the file: `ticketable` is true only for a validated finding, and
+Every finding — validated, needs-investigation and suppressed alike — gets its own `.json` file. The
+files live in a `findings/` directory, never in a flat pile: a single directory puts a suppressed
+accepted risk next to a confirmed Critical and the recipient cannot tell them apart without opening
+both.
+
+```
+reports/
+├── findings-index.json
+└── findings/
+    ├── review-required/VULN-004.json
+    ├── optional-hardening/VULN-019.json
+    └── no-action-suppressed/VULN-007.json
+```
+
+1. **One file per finding.** No finding may be reachable only by parsing the aggregate report. The file
+   name is `VULN-NNN.json` and the number in the name is the finding's own `id` — one file, one finding,
+   no `unassigned.json` collision.
+2. **Exactly one bucket.** Each finding is written to exactly one of the three subdirectories: never two,
+   never zero. Assignment is deterministic, first match wins:
+
+   | Order | Bucket | Assigned when |
+   | - | - | - |
+   | 1 | `no-action-suppressed/` | `validation_status: suppressed` — accepted risk, compensating control, unreachable code |
+   | 2 | `review-required/` | `validation_status: needs_review`, or a validated finding with severity `Critical`/`High`/`Medium`, or `priority` `P0`–`P2` |
+   | 3 | `optional-hardening/` | everything else: validated `Low`/`Informational`, `P3`, or defence-in-depth with no exploitable path |
+
+   `optional-hardening/` means "schedule it if you like", never "ignore it": the file keeps
+   `ticketable: true` and its full record. Only `no-action-suppressed/` says an action was deliberately
+   declined, and its file carries `suppression_reason`.
+3. **The bucket is stated, not inferred.** It is repeated inside the file as `disposition` and in
+   `findings-index.json` as `disposition` alongside `json.path`, so a consumer never has to parse a
+   directory name to know why a finding sits where it does.
+4. **All three subdirectories exist on every run**, even when empty, so a missing bucket reads as a zero
+   count rather than as a stage that did not run.
+5. **Actionability is carried inside the file.** `ticketable` is true only for a validated finding and
    `ticketable_reason` says why the others are not, so an issue tracker never receives an unvalidated
    pattern match.
-2. **The index is checked, not trusted.** `validate_reports.py` proves each entry points at a file that
-   exists, parses, names the same finding and still matches the recorded digest — a stale ticket from an
-   earlier run must not pass as a delivered finding.
+6. **The index is checked, not trusted.** `validate_reports.py` proves each entry points at a file that
+   exists, parses, names the same finding, sits in the bucket its `disposition` implies, and still
+   matches the recorded digest — a stale file from an earlier run must not pass as a delivered finding,
+   and a file in the wrong bucket must not pass as correctly filed.
 
 
 ## 3. Markdown rules
@@ -145,6 +181,8 @@ because the next regeneration silently reverts it.
 
 ## 8. Delivery checklist
 
+- [ ] Every finding has exactly one `.json` under `findings/`, in exactly one disposition bucket, and
+      `findings-index.json` names that same path
 - [ ] Every finding has all 20 fields, or an explicit null/marker
 - [ ] `validation_status` is never `unvalidated`
 - [ ] Severity matches the CVSS band for every scored finding
