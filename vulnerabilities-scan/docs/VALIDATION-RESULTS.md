@@ -17,7 +17,7 @@ rather than omitted.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q            # 400 tests
+python3 -m pytest tests -q            # 452 tests
 ```
 
 The end-to-end audit is `tests/test_end_to_end_audit.py`; it runs both fixture corpora through all
@@ -69,10 +69,10 @@ of intent.
 | 9 | Scanner orchestration | `scripts/scanner_orchestrator.py` | 10 optional tools detected, timed out, captured and recorded as coverage limitations when absent |
 | 10 | Deduplication | `scripts/deduplicate_findings.py` | cross-analyzer merges by location/CWE/root cause, provenance preserved |
 | 11 | Validation and scoring | `scripts/validate_findings.py` | confidence assignment, compensating-control suppression, CVSS 4.0, evidence capture, redaction |
-| 12 | Templates | `templates/report.md.j2`, `templates/report.html.j2`, `templates/report.css` | self-contained HTML, no CDN, escaped untrusted content, print styles |
-| 13 | Renderers | `scripts/generate_markdown.py`, `generate_html.py`, `generate_pdf.py`, `generate_json.py`, `generate_reports.py` | one dataset rendered to every format, plus one JSON per finding under `findings/` (filed by verdict, then urgency), `findings-index.json` and `report-manifest.json` |
-| 14 | Report validator | `scripts/validate_reports.py` | exit 0 with 0 problems on both corpora (section 4); `--require-pdf` escalates a missing PDF |
-| 15 | Fixtures and test suite | `tests/` | 16 test modules plus `conftest.py`, 74 fixture files (34 vulnerable-app, 34 secure-app, 2 expectation data), 433 tests |
+| 12 | Templates | `templates/report.md.j2`, `templates/report.html.j2`, `templates/report.css` | self-contained HTML, no CDN, escaped untrusted content, print styles; carries the overview and statistics sections |
+| 13 | Renderers | `scripts/generate_markdown.py`, `generate_html.py`, `generate_pdf.py`, `generate_json.py`, `generate_reports.py` | one dataset rendered to every format — overview, statistics, findings — plus one JSON per finding under `findings/` (filed by verdict, then urgency), `findings-index.json` and `report-manifest.json` |
+| 14 | Report validator | `scripts/validate_reports.py` | exit 0 with 0 problems on both corpora (section 4); requires the Overview, Statistics and Unassessed-findings sections; `--require-pdf` escalates a missing PDF |
+| 15 | Fixtures and test suite | `tests/` | 16 test modules plus `conftest.py`, 74 fixture files (34 vulnerable-app, 34 secure-app, 2 expectation data), 452 tests |
 | 16 | Research and validation record | `docs/RESEARCH.md`, `docs/RESEARCH-SOURCES.json`, `docs/VALIDATION-RESULTS.md`, `README.md` | dated sources with SHA-256 digests; this document; the human-facing install/use guide |
 
 Re-measure the inventory rather than trusting the table:
@@ -84,7 +84,7 @@ git ls-files tests/test_*.py | wc -l        # 15
 git ls-files tests/fixtures | wc -l         # 74
 for s in scripts/*.py; do python3 "$s" --help >/dev/null || echo "no --help: $s"; done
                                             # prints nothing: all 17 modules accept --help
-python3 -m pytest tests -q                  # 433 passed
+python3 -m pytest tests -q                  # 452 passed
 ```
 
 Everything after this section is measurement. This section is the inventory that measurement
@@ -95,7 +95,7 @@ attaches to.
 ## 3. Test suite
 
 ```
-433 passed in 50.83s
+452 passed in 61.53s
 ```
 
 | Test module | Tests | What it pins |
@@ -104,7 +104,7 @@ attaches to.
 | `test_validate_findings.py` | 46 | Evidence re-reading, path policy, redaction, suppression, leak guard |
 | `test_finding_model.py` | 43 | Finding schema, IDs, placeholder handling, ordering |
 | `test_deduplicate_findings.py` | 27 | Fingerprints, line windows, cross-file merges, provenance |
-| `test_report_generation.py` | 26 | Markdown/HTML/JSON renderers, per-finding JSON, index, manifest, determinism |
+| `test_report_generation.py` | 45 | Markdown/HTML/JSON renderers, per-finding JSON, index, manifest, determinism |
 | `test_scanner_orchestrator.py` | 22 | Tool discovery, timeouts, unavailable-tool accounting |
 | `test_builtin_analyzers.py` | 22 | Rule matching per category, secure look-alike silence, self-scan precision |
 | `test_attack_surface.py` | 22 | Route/framework extraction, auth heuristics, route-bearing code no rule can enumerate |
@@ -116,7 +116,7 @@ attaches to.
 | `test_push_protection_literals.py` | 5 | No live-credential shape anywhere in the tracked tree |
 | `test_install_scanners.py` | 84 | Installer planning per OS, the pipx/Node bootstrap, the elevation rule, archive extraction safety, and that the wrappers delegate instead of carrying their own matrix |
 | `test_finding_buckets.py` | 32 | The finding taxonomy: the mapping is total and mutually exclusive, severity beats priority inside `validated/`, a suppression is filed by kind, every leaf directory is written, a mis-filed or stale file is caught |
-| **Total** | **433** | |
+| **Total** | **452** | |
 
 Every module runs offline and writes only under `.scratch/` (git-ignored).
 
@@ -213,31 +213,51 @@ rather than noise from the source rules.
 | Validation status | 93 validated, 39 needs_review, 3 suppressed |
 | Ticketable | 93 |
 
-The 28 `needs_review` findings are the advisory half of the contract: they are reported with
+The 39 `needs_review` findings are the advisory half of the contract: they are reported with
 their evidence and a stated reason they could not be proven from the snapshot alone, and they are
-*not* counted as ticketable. Nothing is silently dropped — every one of the 108 appears in the
+*not* counted as ticketable. Nothing is silently dropped — every one of the 135 appears in the
 dataset, the index, and exactly one per-finding JSON.
 
 ### 3.4 Delivered artefacts
 
 ```
-reports/SECURITY-AUDIT-REPORT.md     108 findings
-reports/SECURITY-AUDIT-REPORT.html   106 <article class="finding">
-reports/SECURITY-AUDIT-REPORT.json   108 findings
-reports/findings-index.json          108 entries
+reports/SECURITY-AUDIT-REPORT.md     135 findings; Verdict, Overview, Summary, Statistics,
+                                     Coverage, Findings, Needs investigation, Unassessed
+                                     findings, Negative, Suppressed, Methodology
+reports/SECURITY-AUDIT-REPORT.html   132 <article class="finding">
+reports/SECURITY-AUDIT-REPORT.json   135 findings, plus `statistics` and `overview`
+reports/findings-index.json          135 entries
 reports/report-manifest.json         size + sha256 for every artefact above
 reports/findings/<bucket>/VULN-*.json  one file per finding, filed by verdict then urgency
 ```
 
+The renderers compose two sections from the dataset on every run, and the verifier now requires
+both of them:
+
+* **Overview** — five paragraphs: what was adjudicated (93 confirmed, 39 open, 3 suppressed, 0 never
+  assessed), the work split (84 to remediate now, 9 to schedule; 61 Critical-or-High, 45.2%),
+  the suppression kinds, the three most frequent classes, and what the overview does not claim.
+* **Statistics** — every disposition bucket including the empty ones (84 `validated/remediate-now`,
+  9 `validated/schedule`, 39 `needs-review`, 0 `unvalidated`, 3 `suppressed/not-exploitable`, 0, 0,
+  0), the suppression kinds, the 27 category rows, the CWE and language distributions, and the
+  arithmetic: 135 scored / 0 unscored, mean 6.7, highest 9.9 (`VULN-001`), 36 of 36 files examined,
+  97 rules evaluated.
+
+Both are computed by `report_model.build_report` and rendered from the same view model as the
+summary table, so the three cannot disagree; `validate_reports.py` fails a report set whose Markdown
+lacks either section, so an out-of-date generator is caught rather than shipped.
+
 Exact byte counts are deliberately not quoted here: the rendered reports embed the audited
 commit, the dirty/clean state and `generated_at`, so their size changes with every run (the same
 corpus produced 197 770 / 279 947 bytes on a dirty tree at `39ecca9` and 197 341 / 279 496 bytes on
-the clean tree at `8148d2d`). The invariant is the finding count and the article count; the size and
-digest that did hold are recorded per run in `report-manifest.json`.
+the clean tree at `8148d2d`, before the two new sections were added). The invariant is the finding
+count and the article count; the size and digest that did hold are recorded per run in
+`report-manifest.json`.
 
-The HTML carries 106 articles rather than 108 because the two suppressed findings are excluded
+The HTML carries 132 articles rather than 135 because the three suppressed findings are excluded
 from the human-readable report while remaining present in the machine-readable dataset and index —
-that asymmetry is asserted, not assumed.
+that asymmetry is asserted, not assumed. An `unvalidated` finding would be counted as an article in
+its own *Unassessed* section and still excluded from the confirmed counts.
 
 `validate_reports.py` on this directory: **0 problem(s), 1 warning(s)** — the warning is that no PDF
 was requested, which is accurate rather than a failure (`ok: true`, exit 0).
@@ -275,7 +295,7 @@ rule and not file identity.
 
 ## 6. Machine-readable deliverables
 
-Each of the 108 findings gets **exactly one** `.json` describing it; the aggregate metadata has its
+Each of the 135 findings gets **exactly one** `.json` describing it; the aggregate metadata has its
 own file. This is the contract asserted by `test_report_generation.py` and
 `test_end_to_end_audit.py`.
 
@@ -283,8 +303,8 @@ own file. This is the contract asserted by `test_report_generation.py` and
 |---|---|---|
 | `findings-index.json` | One entry per finding: `id`, `kind`, `file`, `line_start`, `line_end`, `category`, `title`, `severity`, `confidence`, `priority`, `validation_status`, `disposition` (the bucket it was filed in), `ticketable`, `ticketable_reason`, `json{path, sha256, bytes, fingerprint}` — plus `totals`, including `totals.by_disposition` | `generate_reports.py` |
 | `findings/<verdict>/[<urgency>/]<ID>.json` | The full per-finding description: location, evidence with line context, CVSS 4.0 vector and score, remediation, references, provenance, and the `disposition` it was filed under | `generate_reports.py` |
-| `report-manifest.json` | The aggregate record: run identity in `meta` (repository, commit, branch, dirty state, audit date, skill version, dataset stage and tool), counts by severity and validation status (`counts.by_severity_detail` breaks severity down by validated / needs-investigation / suppressed), and every artefact with its size and SHA-256 | `generate_reports.py` |
-| `SECURITY-AUDIT-REPORT.json` | Aggregate report document (the same content the Markdown and HTML render) | `generate_reports.py` |
+| `report-manifest.json` | The aggregate record: run identity in `meta` (repository, commit, branch, dirty state, audit date, skill version, dataset stage and tool), counts by severity and validation status (`counts.by_severity_detail` breaks severity down by validated / under-investigation / unassessed / suppressed), and every artefact with its size and SHA-256 | `generate_reports.py` |
+| `SECURITY-AUDIT-REPORT.json` | Aggregate report document (the same content the Markdown and HTML render, including `overview` and `statistics`) | `generate_reports.py` |
 
 Two things in that area are deliberately *not* written into the report directory:
 
@@ -326,6 +346,8 @@ The suite was written to break the pipeline, and it did. Each fix below is now p
 | 13 | Any finding in the `findings` list was rendered as ticketable | `build_ticket` defaulted `ticketable=True`, so a finding that reached stage 6 with `validation_status: unvalidated` -- a validation stage that did not run, or a raw analyzer output fed straight to the generator -- would have been posted to an issue tracker as a vulnerability | `ticketable` is now derived from the bucket, never from the list the finding arrived in; unassessed findings are filed under `unvalidated/`, kept out of the report's `findings` section, and reported in the run's warnings by `validate_reports.py` |
 | 14 | Regenerating a report left the previous filing behind | A finding that changed bucket, or was fixed and no longer reported, kept its old file in the old directory: two files for one id with opposite advice, and the validator counted an unexplained extra | `generate_json.py` prunes every per-finding `.json` it did not write in this run and reports what it removed; `test_regenerating_removes_a_file_the_run_no_longer_produces` pins it |
 | 15 | A dataset whose `evidence` is a plain string crashed the JSON generator | The schema types `evidence` as a string, but `generate_json._description_markdown` assumed the display layer's dict and raised `AttributeError: 'str' object has no attribute 'get'` -- reachable by running the generator on a hand-written dataset | The function accepts either shape and renders the text; found while writing this round's tests |
+| 16 | An unassessed finding was rendered as a confirmed vulnerability | The report's sections were derived from `validation_status` alone, so a finding with `validation_status: unvalidated` was counted in `counts.validated` and printed among *Findings by priority* -- while the same run filed its JSON under `findings/unvalidated/`. One dataset, two deliverables, two different answers about whether the finding was real. Defect 13 fixed the ticket, not the rendering | Every section now reads `report_model.finding_bucket`, the single definition of what a finding was decided to be. Unassessed findings get their own *Unassessed findings* section (Markdown and HTML), a fourth `Unassessed` column in the summary table so each row still sums to its own total, and `counts.unassessed`; the template's rendered `## Unassessed findings` section is required by `validate_reports.py`, and `TestUnassessedFindings` asserts the confirmed section cannot contain one |
+| 17 | The report had no overview and no statistics section | A reader met a verdict sentence and a severity table, then 135 findings: no statement of how the findings were adjudicated, and no distributions to judge whether the sample was representative. The numbers that existed were spread across three sections and could not be checked against anything | `report_model` composes `overview` (paragraphs) and `statistics` (dispositions, suppression kinds, category/CWE/language rankings, scoring and coverage arithmetic) from the findings array; both templates render them and `generate_json` carries them, so Markdown, HTML, PDF and JSON cannot disagree. The verifier refuses a Markdown report missing either section (defects 16-17 are pinned by `test_report_generation.py`) |
 
 Defect 5 came from a requirements change mid-validation (every finding must have its own JSON,
 aggregate metadata its own file) and is the reason `references/reporting-standard.md` gained its
@@ -335,8 +357,10 @@ Defect 6 was found after this run, by pointing the tool at itself. Its fix chang
 corpora deliver the same findings as before it, with byte-identical
 (id, category, severity, confidence, status) tuples.
 
-Defects 11-15 come from the taxonomy change: the layout now answers two questions instead of one, a
-suppression records which kind it was, and the per-finding tree is pruned to the current run. None of
+Defects 11-17 come from the taxonomy change: the layout now answers two questions instead of one, a
+suppression records which kind it was, the per-finding tree is pruned to the current run, a finding
+nothing assessed is no longer presented as one that was, and the report leads with an overview and
+the statistics behind it. None of
 them changes a severity, a count or a verdict; they change what a recipient can tell without opening
 a file. It is recorded here because the previous
 behaviour was a real precision bug in the stage this document treats as ground truth for
@@ -381,7 +405,7 @@ behaviour was a real precision bug in the stage this document treats as ground t
    both directions of the false-positive question, but it is not a measurement of precision on a
    production codebase. The corpora are the regression contract; production precision is unknown
    until the skill is run against real repositories.
-8. **Timings are for an idle machine** (≈60 s for 400 tests, ≈7 s for both corpora) and include no
+8. **Timings are for an idle machine** (≈62 s for 452 tests, ≈7 s for both corpora) and include no
    network or scanner latency, so they are a floor, not a budget.
 
 ---
@@ -391,5 +415,5 @@ behaviour was a real precision bug in the stage this document treats as ground t
 The pipeline is internally consistent end to end: 20/20 required classes still detected on the
 vulnerable corpus, 6/6 recorded false positives and nothing else on the secure corpus, every
 delivered finding traceable to a rule and a code path, every count in the human-readable reports
-reproducible from the machine-readable dataset, and zero secret leaks. The six defects above were
-real and are now covered by tests; the five limitations above are real and are not.
+reproducible from the machine-readable dataset, and zero secret leaks. The seventeen defects above
+were real and are now covered by tests; the eight limitations above are real and are not.

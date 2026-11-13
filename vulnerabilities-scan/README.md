@@ -98,8 +98,8 @@ policy, the Debian/Fedora caveat for `trivy`, and the three PATH traps (`go inst
 the per-finding files, and records the PDF as `unavailable` with the exact reason (missing binary
 versus LaTeX error with the log tail). A missing PDF is never a fabricated file.
 
-**Tested on.** Python 3.13.13 with no network and no external scanners installed; 433 tests pass
-(≈51 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
+**Tested on.** Python 3.13.13 with no network and no external scanners installed; 452 tests pass
+(≈62 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
 verified interpreter and 3.8 as a documented floor, not a promise.
 
 ---
@@ -231,7 +231,7 @@ security-audit/
 ├── transcript.json                 what validation did (redactions applied, suppressions, statuses)
 ├── verification.json               the report verifier's verdict (SHA-256 per artefact)
 └── reports/
-    ├── SECURITY-AUDIT-REPORT.md    the report, for humans in a terminal or a pull request
+    ├── SECURITY-AUDIT-REPORT.md    the report: overview, statistics, then findings by priority
     ├── SECURITY-AUDIT-REPORT.html  self-contained: no CDN, no external font, opens offline
     ├── SECURITY-AUDIT-REPORT.pdf   cover page, TOC, page numbers (needs pandoc + xelatex)
     ├── SECURITY-AUDIT-REPORT.json  the same content as data
@@ -304,9 +304,12 @@ base score. A finding that cannot be scored defensibly is recorded as **unscored
 invented vector.
 
 **Reporting.** Markdown, HTML (embedded CSS/JS, print styles, escaped untrusted content), PDF via
-pandoc + xelatex, JSON, a per-finding index and one ticket JSON per finding. `validate_reports.py`
-then checks that the files exist, parse, agree on IDs, totals and severity distribution, match the
-manifest hashes, and contain no unredacted secret — and refuses (exit 1) if they do not.
+pandoc + xelatex, JSON, a per-finding index and one file per finding. Every report opens with an
+overview of the whole audit and a detailed statistics section — dispositions, category/CWE/language
+distributions, suppression kinds, scoring and coverage arithmetic — all recomputed from the findings
+array by `report_model.py`, so the `validate_reports.py` gate can prove the three formats agree on
+every ID, total and severity distribution, that the files exist, parse, match the manifest hashes, and
+contain no unredacted secret — and it refuses (exit 1) if they do not.
 
 ---
 
@@ -412,7 +415,7 @@ State these in the report, not just in this file.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q          # 433 tests, ~51 s, offline, writes only under .scratch/
+python3 -m pytest tests -q          # 452 tests, ~62 s, offline, writes only under .scratch/
 ```
 
 - `tests/fixtures/vulnerable-app/` — 34 files covering the 20 required vulnerability classes across
@@ -428,8 +431,8 @@ python3 -m pytest tests -q          # 433 tests, ~51 s, offline, writes only und
   JSON and index completeness, no raw secret in any deliverable, and a report set that passes its
   own verifier.
 
-`docs/VALIDATION-RESULTS.md` records what was measured (108 findings on the vulnerable corpus,
-78 validated / 28 needs_review / 2 suppressed, severity 17/37/45/9, 0 leaks, verifier exit 0), the
+`docs/VALIDATION-RESULTS.md` records what was measured (135 findings on the vulnerable corpus,
+93 validated / 39 needs_review / 3 suppressed, severity 18/43/62/12, 0 leaks, verifier exit 0), the
 defects the audit found in the pipeline and how they were fixed, and the limitations that remain.
 `docs/RESEARCH.md` records the standards, tool survey and dated sources behind the design, with
 SHA-256 digests in `docs/RESEARCH-SOURCES.json`.

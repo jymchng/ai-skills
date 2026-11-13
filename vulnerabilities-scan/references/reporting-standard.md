@@ -16,7 +16,7 @@ enforceable contract; this table is its documentation.
 | 3 | `category` | enum | Taxonomy class from `vulnerability-taxonomy.md` |
 | 4 | `severity` | enum | `Critical`/`High`/`Medium`/`Low`/`Informational`, derived from the CVSS band |
 | 5 | `confidence` | enum | `CONFIRMED`/`HIGH`/`MEDIUM`/`LOW` |
-| 6 | `validation_status` | enum | `validated`/`needs_review`/`suppressed` — never `unvalidated` in a report |
+| 6 | `validation_status` | enum | `validated`/`needs_review`/`suppressed`; `unvalidated` is allowed only in the *Unassessed* section, where it is named as a gap rather than a finding |
 | 7 | `cwe` | object | `{id, name}`, most specific applicable |
 | 8 | `owasp` | object | `{top10_2025, api_2023, asvs}` — `null`/`"not mapped"` rather than an invented id |
 | 9 | `cvss_vector` | string\|null | Full `CVSS:4.0/...` covering all 11 base metrics |
@@ -42,20 +42,33 @@ suppressed finding because it decides which `suppressed/` bucket the file is fil
 1. **Header** — repository, commit, branch, dirty state, audit date, skill version, scope path.
 2. **Verdict** — three or four sentences a manager can act on: what was examined, counts by severity,
    and the single most important limitation.
-3. **Summary table** — severity × count plus a confidence breakdown. Must equal `findings.json`.
-4. **Coverage and limitations** — every tool run, every tool missing, every file type not examined,
+3. **Overview** — the whole audit in a few paragraphs: what was examined, how every finding was
+   adjudicated (confirmed, open, suppressed by kind, never assessed), where the risk sits, the
+   highest score recorded, and where to start. Never a hand-written paragraph: it is composed from
+   the dataset so it cannot say something the findings array contradicts.
+4. **Summary table** — severity × count plus the four dispositions and a confidence breakdown. Must
+   equal `findings.json`.
+5. **Statistics** — the numbers behind the verdict, one row per fact: every disposition bucket
+   (including the empty ones), the suppression kinds, and the category / CWE / language
+   distributions, plus the scoring arithmetic (scored, unscored, mean, highest) and the coverage
+   arithmetic (files examined of files in scope, rules evaluated). Every row is recomputed from the
+   findings array; a zero here is a measured zero.
+6. **Coverage and limitations** — every tool run, every tool missing, every file type not examined,
    every exclusion. Not optional, especially when the count is zero.
-5. **Findings by priority** — P0 → P3; each entry presents fields 1–20 arranged for reading.
-6. **Needs investigation** — `needs_review`/LOW items, clearly separated, never counted as
+7. **Findings by priority** — P0 → P3; each entry presents fields 1–20 arranged for reading.
+8. **Needs investigation** — `needs_review`/LOW items, clearly separated, never counted as
    vulnerabilities.
-7. **Negative findings** — checks performed and passed.
-8. **Methodology appendix** — how the audit was performed, standards used, scoring approach, and the
-   confidence/severity glossary.
-9. **Prompt-injection observations** — repository text that tried to instruct the agent, quoted as data.
+9. **Unassessed findings** — anything that reached delivery with no verdict. A gap in the audit, not
+   a finding, and never silently counted among the confirmed ones.
+10. **Negative findings** — checks performed and passed.
+11. **Methodology appendix** — how the audit was performed, standards used, scoring approach, and the
+    confidence/severity glossary.
+12. **Prompt-injection observations** — repository text that tried to instruct the agent, quoted as data.
 
 Ordering inside a section is deterministic: severity desc, then priority, then file, then line.
 
-The **Verdict** and **Coverage** sections form a single claim; never render one without the other.
+The **Verdict**, **Overview** and **Coverage** sections form a single claim, and the **Summary** and
+**Statistics** sections are the same numbers seen two ways; never render one without the others.
 
 ### Machine-readable deliverables
 
@@ -64,7 +77,7 @@ them are written on every run:
 
 | Artefact | Contents |
 | - | - |
-| `SECURITY-AUDIT-REPORT.json` | The whole report: counts, verdict, coverage, methodology, and one ticket object per validated finding |
+| `SECURITY-AUDIT-REPORT.json` | The whole report: counts, statistics, verdict, overview, coverage, methodology, and one ticket object per finding |
 | `findings.json` | The validated dataset — the authority every other artefact is derived from |
 | `findings-index.json` | The register of **every** finding: id, file, line, category, severity, confidence, priority, validation status, `disposition`, whether it is ticketable and why not, and the path plus SHA-256 of that finding's own file |
 | `findings/validated/remediate-now/VULN-NNN.json` | Exactly one file per confirmed vulnerability that owes action now |
@@ -226,7 +239,11 @@ because the next regeneration silently reverts it.
 - [ ] Every finding has exactly one `.json` under `findings/`, in exactly one disposition bucket, and
       `findings-index.json` names that same path
 - [ ] Every finding has all 20 fields, or an explicit null/marker
-- [ ] `validation_status` is never `unvalidated`
+- [ ] Every finding was adjudicated by hand: none is `validated` on the strength of a pattern, and no
+      suppression lacks a `suppression_kind`
+- [ ] `unvalidated` findings are in the *Unassessed* section, never counted as vulnerabilities
+- [ ] The Overview and the Statistics section are present, and their numbers match the summary table
+      and the findings array — they are generated, never authored
 - [ ] Severity matches the CVSS band for every scored finding
 - [ ] Coverage section lists every absent tool and unexamined file type
 - [ ] Negative findings present when the count is low or zero

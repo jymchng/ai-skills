@@ -140,10 +140,24 @@ class TestCounts:
         assert sum(row["count"] for row in detail) == counts["total"] == 4
         assert sum(row["validated"] for row in detail) == counts["validated"] == 2
         assert sum(row["needs_investigation"] for row in detail) == 1
+        assert sum(row["unassessed"] for row in detail) == counts["unassessed"] == 0
         assert sum(row["suppressed"] for row in detail) == 1
         critical = [row for row in detail if row["name"] == "Critical"][0]
         assert critical == {"name": "Critical", "count": 2, "validated": 1,
-                            "needs_investigation": 1, "suppressed": 0}
+                            "needs_investigation": 1, "unassessed": 0, "suppressed": 0}
+
+    def test_every_row_total_equals_the_sum_of_its_columns(self):
+        findings = [
+            _finding(id="VULN-001"),
+            _finding(id="VULN-002", validation_status="needs_review", confidence="LOW"),
+            _finding(id="VULN-003", validation_status="unvalidated"),
+            _finding(id="VULN-004", validation_status="suppressed",
+                     suppression_kind="accepted_risk", suppression_reason="signed off"),
+        ]
+        detail = rm.build_report(_dataset(findings))["counts"]["by_severity_detail"]
+        for row in detail:
+            assert row["count"] == (row["validated"] + row["needs_investigation"]
+                                    + row["unassessed"] + row["suppressed"]), row
 
     def test_every_band_is_present_even_at_zero(self):
         detail = rm.build_report(_dataset([_finding()]))["counts"]["by_severity_detail"]
@@ -364,3 +378,185 @@ class TestOneDataset:
         buckets = sorted(path.parent.relative_to(tmp_path / "findings").as_posix()
                          for path in (tmp_path / "findings").rglob("*.json"))
         assert buckets == ["validated/remediate-now", "validated/schedule"]
+
+
+# --------------------------------------------------------------------------- #
+# The overall overview and the detailed statistics
+# --------------------------------------------------------------------------- #
+
+def _mixed_dataset():
+    """One finding in each disposition, so every statistic has a non-zero case."""
+    return _dataset([
+        _finding(id="VULN-001", language="python"),
+        _finding(id="VULN-002", title="Low issue", severity="Low", priority="P3",
+                 cvss_score=2.1, language="go", category="Configuration",
+                 cwe={"id": "CWE-16", "name": "Configuration"}),
+        _finding(id="VULN-003", title="Open question", validation_status="needs_review",
+                 confidence="LOW", cvss_score=None),
+        _finding(id="VULN-004", title="Not there", validation_status="suppressed",
+                 suppression_kind="false_positive", suppression_reason="escaped upstream",
+                 cvss_score=None),
+        _finding(id="VULN-005", title="Never assessed", validation_status="unvalidated",
+                 cvss_score=None),
+    ])
+
+
+class TestStatistics:
+    def test_every_bucket_is_present_even_at_zero(self):
+        statistics = rm.build_report(_dataset([_finding()]))["statistics"]
+        names = [row["name"] for row in statistics["dispositions"]]
+        assert names == list(rm.FINDING_BUCKETS)
+        assert [row["count"] for row in statistics["dispositions"] if row["name"] !=
+                "validated/remediate-now"] == [0] * (len(names) - 1)
+
+    def test_bucket_counts_sum_to_the_dataset(self):
+        statistics = rm.build_report(_mixed_dataset())["statistics"]
+        assert sum(row["count"] for row in statistics["dispositions"]) == \
+            statistics["total"] == 5
+        assert statistics["action"]["confirmed"] == 2
+        assert statistics["action"]["needs_review"] == 1
+        assert statistics["action"]["unvalidated"] == 1
+        assert statistics["action"]["suppressed"] == 1
+
+    def test_suppression_kinds_are_counted_by_kind(self):
+        statistics = rm.build_report(_mixed_dataset())["statistics"]
+        kinds = {row["name"]: row["count"] for row in statistics["suppression_kinds"]}
+        assert kinds == {"false_positive": 1, "not_exploitable": 0, "accepted_risk": 0,
+                         "unspecified": 0}
+
+    def test_a_suppression_without_a_kind_is_counted_as_unspecified(self):
+        dataset = _dataset([_finding(validation_status="suppressed",
+                                     suppression_reason="no kind recorded")])
+        kinds = {row["name"]: row["count"]
+                 for row in rm.build_report(dataset)["statistics"]["suppression_kinds"]}
+        assert kinds["unspecified"] == 1
+
+    def test_rankings_cover_category_cwe_and_language(self):
+        statistics = rm.build_report(_mixed_dataset())["statistics"]
+        assert [row["name"] for row in statistics["categories"]][0] == "Injection"
+        assert sum(row["count"] for row in statistics["cwes"]) == 5
+        languages = {row["name"] for row in statistics["languages"]}
+        assert {"python", "go"} <= languages
+        # A finding with no recorded language is counted as "unknown", never
+        # dropped: a ranking that silently omits rows understates the dataset.
+        assert "unknown" in languages
+
+    def test_shares_are_percentages_that_sum_to_one_hundred(self):
+        statistics = rm.build_report(_mixed_dataset())["statistics"]
+        total = sum(float(row["share"].rstrip("%")) for row in statistics["dispositions"])
+        assert abs(total - 100.0) < 0.1
+
+    def test_an_empty_dataset_still_renders_statistics(self, tmp_path):
+        model = rm.build_report(_dataset([]))
+        statistics = model["statistics"]
+        assert statistics["total"] == 0
+        assert statistics["total_share"] == "0.0%"
+        assert statistics["scores"]["mean"] == "unscored"
+        for module in (generate_markdown, generate_html):
+            written = module.generate(model, str(tmp_path / module.__name__))
+            text = open(written["path"], encoding="utf-8").read()
+            assert "Statistics" in text
+
+
+class TestOverview:
+    def test_overview_states_what_was_decided(self):
+        overview = " ".join(rm.build_report(_mixed_dataset())["overview"])
+        assert "5 findings" in overview
+        assert "2 confirmed as real vulnerabilities" in overview
+        assert "never assessed" in overview
+        assert "false positive" in overview
+
+    def test_overview_points_at_the_register_and_the_priority_order(self):
+        overview = " ".join(rm.build_report(_mixed_dataset())["overview"])
+        assert "findings-index.json" in overview
+
+    def test_overview_never_invents_coverage_it_did_not_receive(self):
+        overview = " ".join(rm.build_report(_mixed_dataset())["overview"])
+        assert "no inventory of the audited tree reached the report generator" in overview
+
+    def test_overview_uses_the_supplied_inventory_when_it_has_one(self):
+        dataset = _mixed_dataset()
+        dataset["coverage"] = {"files_scanned": 90}
+        model = rm.build_report(dataset, analysis={"coverage": {"files_in_scope": 100}})
+        overview = " ".join(model["overview"])
+        assert "90 of 100 files were examined" in overview
+
+
+class TestStatisticsInEveryFormat:
+    def test_markdown_and_html_carry_both_sections(self, tmp_path):
+        _generate_set(_mixed_dataset(), tmp_path)
+        markdown = open(os.path.join(str(tmp_path), "SECURITY-AUDIT-REPORT.md"),
+                        encoding="utf-8").read()
+        html = open(os.path.join(str(tmp_path), "SECURITY-AUDIT-REPORT.html"),
+                    encoding="utf-8").read()
+        assert "## Overview" in markdown and "## Statistics" in markdown
+        assert 'id="overview"' in html and 'id="statistics"' in html
+        assert "`validated/remediate-now`" in markdown
+
+    def test_the_json_report_carries_the_same_statistics(self, tmp_path):
+        model = _generate_set(_mixed_dataset(), tmp_path)
+        document = json.load(open(os.path.join(str(tmp_path), "SECURITY-AUDIT-REPORT.json"),
+                                  encoding="utf-8"))
+        assert document["statistics"]["total"] == model["statistics"]["total"] == 5
+        assert document["overview"] == model["overview"]
+
+    def test_the_verifier_refuses_a_report_without_the_overview(self, tmp_path):
+        _generate_set(_mixed_dataset(), tmp_path)
+        path = os.path.join(str(tmp_path), "SECURITY-AUDIT-REPORT.md")
+        text = open(path, encoding="utf-8").read().replace("## Overview", "## Omissions")
+        open(path, "w", encoding="utf-8").write(text)
+        result = validate_reports.validate(str(tmp_path))
+        assert not result["ok"]
+        assert any("Overview" in problem for problem in result["problems"])
+
+    def test_the_verifier_refuses_a_report_without_the_statistics(self, tmp_path):
+        _generate_set(_mixed_dataset(), tmp_path)
+        path = os.path.join(str(tmp_path), "SECURITY-AUDIT-REPORT.md")
+        text = open(path, encoding="utf-8").read().replace("## Statistics", "## Figures")
+        open(path, "w", encoding="utf-8").write(text)
+        result = validate_reports.validate(str(tmp_path))
+        assert not result["ok"]
+        assert any("Statistics" in problem for problem in result["problems"])
+
+
+class TestUnassessedFindings:
+    """A finding nothing assessed must never be presented as a vulnerability.
+
+    The report's sections used to be derived from ``validation_status`` alone,
+    which counted an ``unvalidated`` finding among the confirmed ones while the
+    per-finding files filed it under ``findings/unvalidated/``. Two deliverables
+    from one dataset disagreed about whether the finding was real.
+    """
+
+    DATASET = _dataset([
+        _finding(id="VULN-001"),
+        _finding(id="VULN-002", title="Never assessed", validation_status="unvalidated"),
+    ])
+
+    def test_it_is_not_in_the_confirmed_section(self):
+        model = rm.build_report(self.DATASET)
+        assert [entry["id"] for entry in model["findings"]] == ["VULN-001"]
+        assert [entry["id"] for entry in model["unvalidated"]] == ["VULN-002"]
+        assert model["counts"]["validated"] == 1
+        assert model["counts"]["unassessed"] == 1
+
+    def test_the_statistics_agree_with_the_summary(self):
+        model = rm.build_report(self.DATASET)
+        assert model["statistics"]["action"]["confirmed"] == model["counts"]["validated"]
+        assert model["statistics"]["action"]["unvalidated"] == model["counts"]["unassessed"]
+        assert model["counts"]["validated"] + model["counts"]["needs_investigation"] + \
+            model["counts"]["unassessed"] + model["counts"]["suppressed"] == \
+            model["counts"]["total"]
+
+    def test_the_rendered_report_files_it_in_its_own_section(self, tmp_path):
+        _generate_set(self.DATASET, tmp_path)
+        markdown = open(os.path.join(str(tmp_path), "SECURITY-AUDIT-REPORT.md"),
+                        encoding="utf-8").read()
+        confirmed = markdown.split("## Findings by priority", 1)[1].split(
+            "## Needs investigation", 1)[0]
+        assert "VULN-002" not in confirmed
+        unassessed = markdown.split("## Unassessed findings", 1)[1].split(
+            "## Negative findings", 1)[0]
+        assert "VULN-002" in unassessed
+        result = validate_reports.validate(str(tmp_path))
+        assert result["ok"], result["problems"]

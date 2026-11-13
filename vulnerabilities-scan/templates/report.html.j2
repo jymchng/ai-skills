@@ -32,10 +32,13 @@
   <h2>Contents</h2>
   <ol>
     <li><a href="#verdict">Verdict</a></li>
+    <li><a href="#overview">Overview</a></li>
     <li><a href="#summary">Summary</a></li>
+    <li><a href="#statistics">Statistics</a></li>
     <li><a href="#coverage">Coverage and limitations</a></li>
     <li><a href="#findings">Findings by priority</a></li>
     <li><a href="#investigation">Needs investigation</a></li>
+    <li><a href="#unassessed">Unassessed findings</a></li>
     <li><a href="#negative">Negative findings</a></li>
     <li><a href="#suppressed">Suppressed findings</a></li>
     <li><a href="#methodology">Methodology</a></li>
@@ -49,6 +52,14 @@
   <h2>Verdict</h2>
   <div class="verdict">
     {% for sentence in verdict %}<p>{{ sentence }}</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section id="overview">
+  <h2>Overview</h2>
+  <div class="overview">
+    {% for paragraph in overview %}<p>{{ paragraph }}</p>
     {% endfor %}
   </div>
 </section>
@@ -68,10 +79,10 @@
 
   <table class="grid">
     <caption>Severity distribution. Counts are recomputed from the findings array.</caption>
-    <thead><tr><th scope="col">Severity</th><th scope="col">Findings</th><th scope="col">Validated</th><th scope="col">Under investigation</th><th scope="col">Suppressed</th></tr></thead>
+    <thead><tr><th scope="col">Severity</th><th scope="col">Findings</th><th scope="col">Validated</th><th scope="col">Under investigation</th><th scope="col">Unassessed</th><th scope="col">Suppressed</th></tr></thead>
     <tbody>
-      {% for row in counts.by_severity_detail %}<tr><th scope="row"><span class="badge sev-{{ row.name|lower }}">{{ row.name }}</span></th><td>{{ row.count }}</td><td>{{ row.validated }}</td><td>{{ row.needs_investigation }}</td><td>{{ row.suppressed }}</td></tr>
-      {% endfor %}<tr class="total-row"><th scope="row">Total</th><td>{{ counts.total }}</td><td>{{ counts.validated }}</td><td>{{ counts.needs_investigation }}</td><td>{{ counts.suppressed }}</td></tr>
+      {% for row in counts.by_severity_detail %}<tr><th scope="row"><span class="badge sev-{{ row.name|lower }}">{{ row.name }}</span></th><td>{{ row.count }}</td><td>{{ row.validated }}</td><td>{{ row.needs_investigation }}</td><td>{{ row.unassessed }}</td><td>{{ row.suppressed }}</td></tr>
+      {% endfor %}<tr class="total-row"><th scope="row">Total</th><td>{{ counts.total }}</td><td>{{ counts.validated }}</td><td>{{ counts.needs_investigation }}</td><td>{{ counts.unassessed }}</td><td>{{ counts.suppressed }}</td></tr>
     </tbody>
   </table>
 
@@ -86,6 +97,72 @@
   </table>
 
   {% if integrity.summary_disagreements %}<p class="warn"><strong>Dataset integrity warning.</strong> {{ integrity.summary_disagreements|join("; ") }}. The numbers above are recomputed from the findings array, which is authoritative.</p>{% endif %}
+</section>
+
+<section id="statistics">
+  <h2>Statistics</h2>
+  <p class="note">Every row is recomputed from the findings array on this run. A zero is a measured zero, not a bucket that never ran.</p>
+
+  <table class="grid">
+    <caption>Findings by disposition, and whether that disposition counts as a vulnerability.</caption>
+    <thead><tr><th scope="col">Disposition</th><th scope="col">Findings</th><th scope="col">Share of dataset</th><th scope="col">Counted as a vulnerability</th></tr></thead>
+    <tbody>
+      {% for row in statistics.dispositions %}<tr><th scope="row"><code>{{ row.name }}</code></th><td>{{ row.count }}</td><td>{{ row.share }}</td><td>{{ row.vulnerability }}</td></tr>
+      {% endfor %}<tr class="total-row"><th scope="row">Total</th><td>{{ statistics.total }}</td><td>{{ statistics.total_share }}</td><td>{{ counts.validated }}</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Confirmed findings: {{ statistics.action.confirmed }} in total, {{ statistics.action.remediate_now }} owing remediation now and {{ statistics.action.schedule }} schedulable; {{ statistics.action.needs_review }} awaiting a human decision and {{ statistics.action.unvalidated }} never assessed.</p>
+
+  <table class="grid">
+    <caption>Suppression kinds. "The detector was wrong" and "we are living with it" are different claims.</caption>
+    <thead><tr><th scope="col">Kind</th><th scope="col">Findings</th><th scope="col">Share of suppressions</th></tr></thead>
+    <tbody>
+      {% for row in statistics.suppression_kinds %}<tr><th scope="row">{{ row.name }}</th><td>{{ row.count }}</td><td>{{ row.share }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <table class="grid">
+    <caption>Findings by category.</caption>
+    <thead><tr><th scope="col">Category</th><th scope="col">Findings</th><th scope="col">Share of dataset</th></tr></thead>
+    <tbody>
+      {% for row in statistics.categories %}<tr><th scope="row">{{ row.name }}</th><td>{{ row.count }}</td><td>{{ row.share }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <table class="grid">
+    <caption>Findings by CWE.</caption>
+    <thead><tr><th scope="col">CWE</th><th scope="col">Findings</th><th scope="col">Share of dataset</th></tr></thead>
+    <tbody>
+      {% for row in statistics.cwes %}<tr><th scope="row">{{ row.name }}</th><td>{{ row.count }}</td><td>{{ row.share }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <table class="grid">
+    <caption>Findings by language.</caption>
+    <thead><tr><th scope="col">Language</th><th scope="col">Findings</th><th scope="col">Share of dataset</th></tr></thead>
+    <tbody>
+      {% for row in statistics.languages %}<tr><th scope="row">{{ row.name }}</th><td>{{ row.count }}</td><td>{{ row.share }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <table class="grid">
+    <caption>Scoring and coverage arithmetic.</caption>
+    <thead><tr><th scope="col">Measure</th><th scope="col">Value</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Scored with CVSS v4.0</th><td>{{ statistics.scores.scored }}</td></tr>
+      <tr><th scope="row">Explicitly unscored</th><td>{{ statistics.scores.unscored }}</td></tr>
+      <tr><th scope="row">Mean score of scored findings</th><td>{{ statistics.scores.mean }}</td></tr>
+      <tr><th scope="row">Highest score</th><td>{{ statistics.scores.highest.score }} ({{ statistics.scores.highest.id }})</td></tr>
+      <tr><th scope="row">Critical or High</th><td>{{ statistics.scores.critical_high }} ({{ statistics.scores.critical_high_share }} of the dataset)</td></tr>
+      <tr><th scope="row">Files examined</th><td>{{ statistics.coverage.files_scanned }} of {{ statistics.coverage.files_in_scope }} ({{ statistics.coverage.files_share }})</td></tr>
+      <tr><th scope="row">Languages carrying findings</th><td>{{ statistics.coverage.languages }}</td></tr>
+      <tr><th scope="row">Rules evaluated</th><td>{{ statistics.coverage.rules_evaluated }}</td></tr>
+    </tbody>
+  </table>
 </section>
 
 <section id="coverage">
@@ -193,6 +270,22 @@
     </header>
     <p>{{ finding.description }}</p>
     {% if finding.validation %}<p class="factors"><strong>Why it is unresolved:</strong> {{ finding.validation }}</p>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+
+<section id="unassessed">
+  <h2>Unassessed findings</h2>
+  <p class="note">Nothing in this audit assessed these findings. They reached delivery without a verdict: a gap in the audit, not a vulnerability and not a dismissal. They are listed so the gap is visible instead of being counted among the confirmed findings.</p>
+  {% if not unvalidated %}<p class="note">None. Every delivered finding carried a verdict.</p>{% endif %}
+  {% for finding in unvalidated %}<article class="finding sev-{{ finding.severity_class }} slim" id="{{ finding.id }}">
+    <header class="finding-head">
+      <span class="badge sev-{{ finding.severity_class }}">{{ finding.severity }}</span>
+      <span class="fid">{{ finding.id }}</span>
+      <h3>{{ finding.title }}</h3>
+      <p class="where"><code>{{ finding.where }}</code> · {{ finding.category }}</p>
+    </header>
+    <p>{{ finding.description }}</p>
   </article>
   {% endfor %}
 </section>

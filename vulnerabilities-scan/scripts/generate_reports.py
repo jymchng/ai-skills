@@ -91,6 +91,7 @@ def generate_all(model: Mapping[str, Any], outdir: str,
         "ids": [entry.get("id") for entry in findings],
         "needs_investigation_ids": [entry.get("id")
                                     for entry in model.get("needs_investigation") or []],
+        "unvalidated_ids": [entry.get("id") for entry in model.get("unvalidated") or []],
         "suppressed_ids": [entry.get("id") for entry in model.get("suppressed") or []],
         "formats": {name: {key: value for key, value in result.items()
                            if key in ("format", "status", "path", "bytes", "sha256",

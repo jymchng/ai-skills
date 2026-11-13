@@ -62,10 +62,13 @@ VERSION = "1.0.0"
 #: Sections every Markdown report must contain, in reporting-standard order.
 MD_SECTIONS: Tuple[str, ...] = (
     "## Verdict",
+    "## Overview",
     "## Summary",
+    "## Statistics",
     "## Coverage and limitations",
     "## Findings by priority",
     "## Needs investigation",
+    "## Unassessed findings",
     "## Negative findings",
     "## Suppressed findings",
     "## Methodology",
@@ -217,7 +220,7 @@ def _json_report_ids(path: str) -> List[str]:
 
 
 def _json_report_article_ids(path: str) -> List[str]:
-    """Every id the HTML renders as an article: findings plus needs-investigation.
+    """Every id the HTML renders as an article: findings, investigation, unassessed.
 
     Used when no ``--dataset`` was given, so the article count still has an
     authority to compare against instead of silently passing.
@@ -229,7 +232,7 @@ def _json_report_article_ids(path: str) -> List[str]:
     except json.JSONDecodeError:
         return []
     ids: List[str] = []
-    for key in ("findings", "needs_investigation"):
+    for key in ("findings", "needs_investigation", "unvalidated"):
         section = document.get(key)
         if not isinstance(section, list):
             continue
@@ -431,6 +434,7 @@ def validate(outdir: str, dataset: Optional[str] = None,
         expected_ids = [entry["id"] for entry in model.get("findings") or []]
         expected_article_ids = expected_ids + [entry["id"] for entry
                                               in model.get("needs_investigation") or []]
+        expected_article_ids += [entry["id"] for entry in model.get("unvalidated") or []]
         all_finding_ids = expected_article_ids + [entry["id"] for entry
                                                  in model.get("suppressed") or []]
         checked["dataset"] = {"path": dataset, "sha256": _digest(dataset),
@@ -546,6 +550,7 @@ def validate(outdir: str, dataset: Optional[str] = None,
     if not all_finding_ids:  # no --dataset: fall back to what the manifest records
         all_finding_ids = list(manifest.get("ids") or []) + list(
             manifest.get("needs_investigation_ids") or []) + list(
+            manifest.get("unvalidated_ids") or []) + list(
             manifest.get("suppressed_ids") or [])
     if not os.path.exists(json_path):
         problems.append("missing %s" % rm.OUTPUT_NAMES["json"])

@@ -18,6 +18,9 @@ developer can dismiss in one glance. This file is the suppression discipline.
 
 ## 2. Suppression rules (applied in this order)
 
+Adjudicate first, suppress second: each finding is re-read and decided on its own evidence, and a
+suppression is a recorded decision about *that* finding, never a batch action over a directory.
+
 1. **Recognised sanitiser on the path** → suppress, record the sanitiser and line.
 2. **Framework auto-escaping in the correct context** → suppress for XSS only.
 3. **Parameterised call** → suppress for injection classes.

@@ -11,12 +11,17 @@ refer to this working tree, not to a published commit.{% endif %}
 
 {% for sentence in verdict %}{{ sentence|mdline }} {% endfor %}
 
+## Overview
+
+{% for paragraph in overview %}{{ paragraph|mdline }}
+
+{% endfor %}
 ## Summary
 
-| Severity | Count | Validated | Under investigation | Suppressed |
-| - | - | - | - | - |
-{% for row in counts.by_severity_detail %}| {{ row.name }} | {{ row.count }} | {{ row.validated }} | {{ row.needs_investigation }} | {{ row.suppressed }} |
-{% endfor %}| **Total** | **{{ counts.total }}** | {{ counts.validated }} | {{ counts.needs_investigation }} | {{ counts.suppressed }} |
+| Severity | Count | Validated | Under investigation | Unassessed | Suppressed |
+| - | - | - | - | - | - |
+{% for row in counts.by_severity_detail %}| {{ row.name }} | {{ row.count }} | {{ row.validated }} | {{ row.needs_investigation }} | {{ row.unassessed }} | {{ row.suppressed }} |
+{% endfor %}| **Total** | **{{ counts.total }}** | {{ counts.validated }} | {{ counts.needs_investigation }} | {{ counts.unassessed }} | {{ counts.suppressed }} |
 
 Confidence: {% for name, count in counts.by_confidence.items() %}{{ name }} {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}.
 Scoring: {{ counts.scored }} scored with CVSS v4.0, {{ counts.unscored }} explicitly unscored.
@@ -28,6 +33,46 @@ Priority: {% for name, count in counts.by_priority.items() %}{{ name }} {{ count
 > **Dataset integrity warning.** {{ integrity.summary_disagreements|join("; ")|mdline }}. The numbers above are
 > recomputed from the findings array, which is authoritative.
 {% endif %}
+
+## Statistics
+
+Every row below is recomputed from the findings array on this run. A zero is a measured zero, not a
+bucket that never ran; the layout, the category list and the suppression kinds are all that this
+audit knows how to produce a finding into.
+
+| Disposition | Findings | Share of dataset | Counted as a vulnerability |
+| - | - | - | - |
+{% for row in statistics.dispositions %}| `{{ row.name }}` | {{ row.count }} | {{ row.share }} | {{ row.vulnerability }} |
+{% endfor %}| Total | {{ statistics.total }} | {{ statistics.total_share }} | {{ counts.validated }} |
+
+Confirmed findings: {{ statistics.action.confirmed }} in total, {{ statistics.action.remediate_now }} owing remediation now and {{ statistics.action.schedule }} schedulable; {{ statistics.action.needs_review }} awaiting a human decision and {{ statistics.action.unvalidated }} never assessed.
+
+| Suppression kind | Findings | Share of suppressions |
+| - | - | - |
+{% for row in statistics.suppression_kinds %}| {{ row.name }} | {{ row.count }} | {{ row.share }} |
+{% endfor %}
+| Category | Findings | Share of dataset |
+| - | - | - |
+{% for row in statistics.categories %}| {{ row.name|mdcell }} | {{ row.count }} | {{ row.share }} |
+{% endfor %}
+| CWE identifier | Findings | Share of dataset |
+| - | - | - |
+{% for row in statistics.cwes %}| {{ row.name|mdcell }} | {{ row.count }} | {{ row.share }} |
+{% endfor %}
+| Language | Findings | Share of dataset |
+| - | - | - |
+{% for row in statistics.languages %}| {{ row.name|mdcell }} | {{ row.count }} | {{ row.share }} |
+{% endfor %}
+| Scoring and coverage | Value |
+| - | - |
+| Scored with CVSS v4.0 | {{ statistics.scores.scored }} |
+| Explicitly unscored | {{ statistics.scores.unscored }} |
+| Mean score of scored findings | {{ statistics.scores.mean }} |
+| Highest score | {{ statistics.scores.highest.score }} ({{ statistics.scores.highest.id }}) |
+| Critical or High | {{ statistics.scores.critical_high }} ({{ statistics.scores.critical_high_share }} of the dataset) |
+| Files examined | {{ statistics.coverage.files_scanned }} of {{ statistics.coverage.files_in_scope }} ({{ statistics.coverage.files_share }}) |
+| Languages carrying findings | {{ statistics.coverage.languages }} |
+| Rules evaluated | {{ statistics.coverage.rules_evaluated }} |
 
 ## Coverage and limitations
 
@@ -146,6 +191,21 @@ confirm or discard them, and are excluded from the validated counts above.
 
 {% if finding.validation %}_Why it is unresolved:_ {{ finding.validation|mdline }}
 {% endif %}{% endfor %}
+## Unassessed findings
+
+Nothing in this audit assessed the findings below. They reached delivery without a verdict, which
+makes them a gap in the audit — not a vulnerability, and not a dismissal. They are listed so the gap
+is visible instead of being silently counted among the confirmed findings.
+
+{% if not unvalidated %}_None. Every delivered finding carried a verdict._
+{% endif %}{% for finding in unvalidated %}
+### {{ finding.id }} — {{ finding.title|mdline }} ({{ finding.severity }})
+
+`{{ finding.where|mdcell }}` · {{ finding.cwe|mdcell }} · {{ finding.category }}
+
+{{ finding.description|mdline }}
+
+{% endfor %}
 ## Negative findings
 
 Checks that were performed and found no issue. A short list here usually means the audit was shallow,

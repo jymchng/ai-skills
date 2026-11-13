@@ -487,14 +487,16 @@ def _numbered(findings: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
 
 def _severity_detail(ordered: Sequence[Mapping[str, Any]], validated: Sequence[Mapping[str, Any]],
                      investigation: Sequence[Mapping[str, Any]],
-                     suppressed: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
-    """Per-severity cross-tab of the three dispositions.
+                     suppressed: Sequence[Mapping[str, Any]],
+                     unassessed: Sequence[Mapping[str, Any]] = ()) -> List[Dict[str, Any]]:
+    """Per-severity cross-tab of the four dispositions.
 
     The summary table previously printed an em dash in the validated,
     under-investigation and suppressed columns, which a reader cannot tell
     apart from a zero and which hides the case that matters most: a Critical
     finding sitting in the needs-investigation pile rather than in the
-    validated list.
+    validated list. The unassessed column exists for the same reason: without
+    it the row total silently exceeded the sum of the columns beside it.
     """
     names = list(SEVERITIES)
     extra = sorted({str(f.get("severity")) for f in ordered} - set(SEVERITIES))
@@ -506,6 +508,7 @@ def _severity_detail(ordered: Sequence[Mapping[str, Any]], validated: Sequence[M
             "validated": sum(1 for f in validated if str(f.get("severity")) == name),
             "needs_investigation": sum(1 for f in investigation
                                        if str(f.get("severity")) == name),
+            "unassessed": sum(1 for f in unassessed if str(f.get("severity")) == name),
             "suppressed": sum(1 for f in suppressed if str(f.get("severity")) == name),
         })
     return rows
@@ -715,16 +718,18 @@ def _verdict(meta: Mapping[str, Any], counts: Mapping[str, Any],
             "coverage, not about the absence of defects: read the coverage section before "
             "treating it as a clean bill of health.")
     else:
+        unassessed = counts.get("unassessed") or 0
         sentences.append(
             "%d finding%s recorded: %d Critical, %d High, %d Medium, %d Low, %d Informational; "
-            "%d validated, %d under investigation, %d suppressed by a compensating control."
+            "%d validated, %d under investigation, %d suppressed by a compensating control%s."
             % (total, "" if total == 1 else "s",
                counts["by_severity"].get("Critical", 0),
                counts["by_severity"].get("High", 0),
                counts["by_severity"].get("Medium", 0),
                counts["by_severity"].get("Low", 0),
                counts["by_severity"].get("Informational", 0),
-               validated, counts["needs_investigation"], counts["suppressed"]))
+               validated, counts["needs_investigation"], counts["suppressed"],
+               (", and %d never assessed" % unassessed) if unassessed else ""))
         worst = counts["first_priority"]
         if worst:
             sentences.append(
@@ -744,6 +749,238 @@ def _verdict(meta: Mapping[str, Any], counts: Mapping[str, Any],
             "No coverage limitation was recorded, which usually means the audit metadata was "
             "incomplete; treat the absence of findings with caution.")
     return sentences
+
+
+def _int(value: Any) -> int:
+    """Best-effort integer, for counts that arrived as strings or not at all."""
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _share(part: Any, whole: Any) -> str:
+    """Share of a whole as a one-decimal percentage string.
+
+    A zero whole yields ``0.0%`` instead of raising: an audit that recorded no
+    findings is a legitimate result, and its statistics still have to render.
+    """
+    total = _int(whole)
+    return "%.1f%%" % (100.0 * _int(part) / total) if total else "0.0%"
+
+
+def _plural(count: int, word: str) -> str:
+    return "%d %s%s" % (count, word, "" if count == 1 else "s")
+
+
+def _score(finding: Mapping[str, Any]) -> Optional[float]:
+    """The CVSS score as a number, or ``None`` when the finding is unscored."""
+    value = finding.get("cvss_score")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ranked(counts: Mapping[str, Any], limit: int = 0) -> List[Dict[str, Any]]:
+    """A name/count mapping as table rows: count descending, then name."""
+    rows = sorted(((str(name), _int(count)) for name, count in counts.items()),
+                  key=lambda item: (-item[1], item[0]))
+    if limit:
+        rows = rows[:limit]
+    return [{"name": name, "count": count} for name, count in rows]
+
+
+def _with_share(rows: Sequence[Mapping[str, Any]], whole: Any) -> List[Dict[str, Any]]:
+    total = _int(whole)
+    return [{"name": row["name"], "count": row["count"],
+             "share": _share(row["count"], total)} for row in rows]
+
+
+def _statistics(ordered: Sequence[Mapping[str, Any]],
+                validated: Sequence[Mapping[str, Any]],
+                investigation: Sequence[Mapping[str, Any]],
+                suppressed: Sequence[Mapping[str, Any]],
+                counts: Mapping[str, Any],
+                coverage: Mapping[str, Any],
+                unassessed: Sequence[Mapping[str, Any]] = ()) -> Dict[str, Any]:
+    """The dataset's distribution, counted once and rendered by every format.
+
+    The Summary section answers *how bad is it*; this answers *what is in the
+    dataset and what was decided about each part of it*, which is the question a
+    reader asks before deciding whether to trust the report at all. Every row is
+    derived from the findings array, so a zero is a measured zero: buckets and
+    dispositions are enumerated from the taxonomy rather than from whatever
+    happened to be present, and a missing bucket therefore cannot read as a
+    stage that never ran.
+    """
+    total = len(ordered)
+    buckets = {bucket: 0 for bucket in FINDING_BUCKETS}
+    for finding in ordered:
+        bucket = finding_bucket(finding)
+        buckets[bucket] = buckets.get(bucket, 0) + 1
+
+    dispositions = [
+        {"name": bucket, "count": buckets[bucket],
+         "share": _share(buckets[bucket], total),
+         "vulnerability": "yes" if bucket_is_validated(bucket) else "no"}
+        for bucket in FINDING_BUCKETS
+    ]
+
+    kinds: Dict[str, int] = {kind: 0 for kind in SUPPRESSION_KINDS}
+    kinds[SUPPRESSION_UNSPECIFIED] = 0
+    for finding in suppressed:
+        kind = str(finding.get("suppression_kind") or SUPPRESSION_UNSPECIFIED)
+        kinds[kind] = kinds.get(kind, 0) + 1
+
+    cwes: Dict[str, int] = {}
+    for finding in ordered:
+        label = _cwes(finding)
+        cwes[label] = cwes.get(label, 0) + 1
+
+    scores = [value for value in (_score(finding) for finding in ordered)
+              if value is not None]
+    highest: Dict[str, Any] = {"score": "unscored", "id": "none", "title": ""}
+    if scores:
+        top = max(scores)
+        for finding in ordered:
+            if _score(finding) == top:
+                highest = {"score": "%.1f" % top, "id": finding.get("id"),
+                           "title": finding.get("title") or ""}
+                break
+
+    return {
+        "total": total,
+        "total_share": _share(total, total),
+        "dispositions": dispositions,
+        "suppression_kinds": _with_share(_ranked(kinds), len(suppressed)),
+        "categories": _with_share(_ranked(counts.get("by_category") or {}), total),
+        "cwes": _with_share(_ranked(cwes), total),
+        "languages": _with_share(_ranked(_count_by(ordered, "language")), total),
+        "scores": {
+            "scored": len(scores),
+            "unscored": total - len(scores),
+            "mean": ("%.1f" % (sum(scores) / len(scores))) if scores else "unscored",
+            "highest": highest,
+            "critical_high": _int(counts.get("critical_high")),
+            "critical_high_share": _share(counts.get("critical_high"), total),
+        },
+        "action": {
+            "confirmed": len(validated),
+            "remediate_now": buckets.get("validated/remediate-now", 0),
+            "schedule": buckets.get("validated/schedule", 0),
+            "needs_review": len(investigation),
+            "unvalidated": len(unassessed),
+            "suppressed": len(suppressed),
+        },
+        "coverage": {
+            "files_scanned": coverage.get("files_scanned"),
+            "files_in_scope": coverage.get("files_in_scope"),
+            "files_share": _share(coverage.get("files_scanned"),
+                                  coverage.get("files_in_scope")),
+            "languages": len(_count_by(ordered, "language")),
+            "rules_evaluated": coverage.get("rules_evaluated"),
+        },
+    }
+
+
+def _overview(counts: Mapping[str, Any], statistics: Mapping[str, Any],
+              coverage: Mapping[str, Any]) -> List[str]:
+    """The whole audit in a few sentences, before any table.
+
+    The Verdict states the numbers; the Overview explains what was decided about
+    them and where to start, so a reader who stops after one paragraph still
+    knows whether this report is a list of confirmed vulnerabilities or a list
+    of candidates. It is composed only from the dataset, never authored by hand,
+    because a hand-written overview is the one part of a report that goes stale.
+    """
+    total = _int(statistics.get("total"))
+    action = statistics.get("action") or {}
+    scores = statistics.get("scores") or {}
+    coverage_info = statistics.get("coverage") or {}
+    paragraphs: List[str] = []
+
+    if total == 0:
+        paragraphs.append(
+            "Nothing was recorded for this snapshot: no finding survived validation. That is a "
+            "statement about coverage as much as about the code, so read the coverage section "
+            "before treating the empty result as a clean bill of health.")
+    else:
+        paragraphs.append(
+            "This audit recorded %s and adjudicated every one of them: %d confirmed as real "
+            "vulnerabilities (%s of the dataset), %d left open for a human decision, %d "
+            "suppressed with a recorded reason%s."
+            % (_plural(total, "finding"), _int(action.get("confirmed")),
+               _share(action.get("confirmed"), total), _int(action.get("needs_review")),
+               _int(action.get("suppressed")),
+               (", and %d never assessed" % _int(action.get("unvalidated")))
+               if _int(action.get("unvalidated")) else ""))
+        paragraphs.append(
+            "Work splits into %d finding%s to remediate now and %d to schedule; %d of the whole "
+            "dataset %s Critical or High (%s), and the highest score recorded is %s%s."
+            % (_int(action.get("remediate_now")),
+               "" if _int(action.get("remediate_now")) == 1 else "s",
+               _int(action.get("schedule")), _int(scores.get("critical_high")),
+               "is" if _int(scores.get("critical_high")) == 1 else "are",
+               scores.get("critical_high_share"),
+               (scores.get("highest") or {}).get("score"),
+               (" on %s" % (scores.get("highest") or {}).get("id"))
+               if (scores.get("highest") or {}).get("id") not in (None, "", "none") else ""))
+        if _int(action.get("suppressed")):
+            kinds = {row["name"]: row["count"]
+                     for row in statistics.get("suppression_kinds") or []}
+            parts = []
+            for name, label in (("false_positive", "the flaw is not there"),
+                                ("not_exploitable", "real but no attacker can reach it"),
+                                ("accepted_risk", "real, reachable and signed off"),
+                                ("unspecified", "closed without recording which kind")):
+                if _int(kinds.get(name)):
+                    parts.append("%d %s (%s)" % (_int(kinds.get(name)),
+                                                 name.replace("_", " "), label))
+            paragraphs.append(
+                "The suppressed findings are recorded by kind — %s — because \"the detector "
+                "was wrong\" and \"we are living with it\" are different claims with different "
+                "follow-ups." % "; ".join(parts))
+        top = [row for row in (statistics.get("categories") or []) if row["count"]][:3]
+        if top:
+            paragraphs.append(
+                "The most frequent classes were %s. Start at the confirmed findings that owe "
+                "action now and work down by priority; findings-index.json names the bucket and "
+                "the file of every finding, so nothing has to be inferred from a directory name."
+                % "; ".join("%s (%d)" % (row["name"], row["count"]) for row in top))
+        else:
+            paragraphs.append(
+                "Start at the confirmed findings that owe action now and work down by priority; "
+                "findings-index.json names the bucket and the file of every finding, so nothing "
+                "has to be inferred from a directory name.")
+
+    missing = coverage.get("tools_unavailable") or []
+    if missing:
+        paragraphs.append(
+            "What this overview does not claim: %s of %s files were examined (%s) and %d "
+            "external scanner%s could not run, so automated coverage is partial — the "
+            "detailed statistics below describe the findings that were recorded, not the "
+            "weaknesses that no tool looked for."
+            % (coverage_info.get("files_scanned"), coverage_info.get("files_in_scope"),
+               coverage_info.get("files_share"), len(missing), "" if len(missing) == 1 else "s"))
+    elif _int(coverage_info.get("files_in_scope")):
+        paragraphs.append(
+            "What this overview does not claim: %s of %s files were examined (%s); the detailed "
+            "statistics below describe the findings that were recorded, not the weaknesses no "
+            "tool looked for."
+            % (coverage_info.get("files_scanned"), coverage_info.get("files_in_scope"),
+               coverage_info.get("files_share")))
+    else:
+        paragraphs.append(
+            "What this overview does not claim: no inventory of the audited tree reached the "
+            "report generator, so neither the proportion of files examined nor the automated "
+            "coverage can be stated here. The coverage section records what it can, and its "
+            "gaps are part of the result.")
+    return paragraphs
 
 
 def _coverage(dataset: Mapping[str, Any], analysis: Mapping[str, Any],
@@ -881,19 +1118,31 @@ def build_report(dataset: Mapping[str, Any], *, metadata: Optional[Mapping[str, 
     findings = [f for f in _as_list(dataset.get("findings")) if isinstance(f, dict)]
     findings = _numbered(findings)
     ordered = sorted(findings, key=_sort_key)
-    validated = [f for f in ordered if not _is_suppressed(f) and not _is_investigation(f)]
-    investigation = [f for f in ordered if "needs_review" == str(f.get("validation_status"))
-                     or (not _is_suppressed(f) and _is_investigation(f))]
-    suppressed = [f for f in ordered if _is_suppressed(f)]
+    # The report's own sections read the *bucket*, not the status string: the
+    # bucket taxonomy is the one definition of what a finding was decided to be,
+    # and the two used to disagree. A finding nothing assessed has no verdict, so
+    # it gets its own section instead of being counted among the confirmed ones.
+    bucket = {index: finding_bucket(finding) for index, finding in enumerate(ordered)}
+    validated = [finding for index, finding in enumerate(ordered)
+                 if bucket_is_validated(bucket[index]) and not _is_investigation(finding)]
+    investigation = [finding for index, finding in enumerate(ordered)
+                     if bucket[index] == "needs-review"
+                     or (bucket_is_validated(bucket[index]) and _is_investigation(finding))]
+    unassessed = [finding for index, finding in enumerate(ordered)
+                  if bucket[index] == "unvalidated"]
+    suppressed = [finding for index, finding in enumerate(ordered)
+                  if bucket[index].startswith("suppressed/")]
 
     by_severity = _count_by(ordered, "severity", SEVERITIES)
     counts = {
         "total": len(ordered),
         "validated": len(validated),
         "needs_investigation": len(investigation),
+        "unassessed": len(unassessed),
         "suppressed": len(suppressed),
         "by_severity": by_severity,
-        "by_severity_detail": _severity_detail(ordered, validated, investigation, suppressed),
+        "by_severity_detail": _severity_detail(ordered, validated, investigation,
+                                               suppressed, unassessed),
         "by_confidence": _count_by(ordered, "confidence", fm.CONFIDENCES),
         "by_validation_status": _count_by(ordered, "validation_status", fm.VALIDATION_STATUSES),
         "by_priority": _count_by(ordered, "priority", fm.PRIORITIES),
@@ -911,6 +1160,8 @@ def build_report(dataset: Mapping[str, Any], *, metadata: Optional[Mapping[str, 
 
     coverage = _coverage(dataset, analysis, inventory)
     meta = _meta(dataset, metadata, analysis, inventory)
+    statistics = _statistics(ordered, validated, investigation, suppressed, counts,
+                             coverage, unassessed)
 
     # Never trust a stale summary: recompute and report the disagreement.
     stated = _as_dict(dataset.get("summary"))
@@ -930,8 +1181,11 @@ def build_report(dataset: Mapping[str, Any], *, metadata: Optional[Mapping[str, 
         "generated_at": now or _utc_now(),
         "meta": meta,
         "counts": counts,
+        "statistics": statistics,
+        "overview": _overview(counts, statistics, coverage),
         "findings": [_display(f) for f in validated],
         "needs_investigation": [_display(f) for f in investigation],
+        "unvalidated": [_display(f) for f in unassessed],
         "suppressed": [_display(f) for f in suppressed],
         "negative_findings": [_as_dict(x) for x in _as_list(dataset.get("negative_findings"))],
         "suppressions": [_as_dict(x) for x in _as_list(dataset.get("suppressions"))],
@@ -1171,8 +1425,8 @@ def read_text_file(path: str) -> str:
 def context_for(model: Mapping[str, Any], **extra: Any) -> Dict[str, Any]:
     """The template context: the view model plus per-format extras.
 
-    Formats never add their own facts \u2014 only presentation assets such as the
-    stylesheet \u2014 so the three outputs cannot drift apart.
+    Formats never add their own facts — only presentation assets such as the
+    stylesheet — so the three outputs cannot drift apart.
     """
     context = dict(model)
     context.update(extra)

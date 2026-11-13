@@ -46,9 +46,9 @@ be re-entered at any stage without replaying everything before it.
 | 2 | Technology and attack surface | `technologies.json`, `attack_surface.json` — frameworks, entry points, routes, trust boundaries, auth middleware | `references/security-methodology.md` |
 | 3 | Detection | `raw_findings.json` — built-in analyzer hits plus normalized external scanner output | `references/vulnerability-taxonomy.md`, `references/language-security-guides.md`, `references/scanner-reference.md` |
 | 4 | Normalize and deduplicate | `findings.json` — one finding per real issue, provenance merged | `references/reporting-standard.md` |
-| 5 | Validate | `findings.json` — confidence assigned, compensating controls checked, obvious false positives suppressed with a recorded reason and kind (`false_positive`/`not_exploitable`/`accepted_risk`) | `references/validation-methodology.md`, `references/false-positive-handling.md` |
+| 5 | Validate | `findings.json` — every candidate adjudicated one at a time: `validated`, `needs_review`, or suppressed as `false_positive`/`not_exploitable`/`accepted_risk`, each filed in its bucket | `references/validation-methodology.md`, `references/false-positive-handling.md` |
 | 6 | Score and prioritize | `findings.json` — CVSS 4.0 vector per finding, severity band, P0–P3 priority | `references/severity-scoring.md` |
-| 7 | Report | `report.md`, `report.html`, `report.pdf` from the one dataset, plus one JSON per finding under `findings/` filed by verdict then urgency | `references/reporting-standard.md` |
+| 7 | Report | `report.md`, `report.html`, `report.pdf` from the one dataset — overall overview first, then the detailed statistics, then the findings — plus one JSON per finding under `findings/` filed by verdict then urgency | `references/reporting-standard.md` |
 | 8 | Verify | `verification.json` — cross-format consistency, coverage accounting, no unredacted secrets | `references/reporting-standard.md` |
 
 See `docs/RESEARCH.md` in this skill's source repository for the evidence behind each stage. That
@@ -106,15 +106,51 @@ preserving provenance as `sources: [{tool, rule_id, raw_ref}]`. Three scanners r
 line is one finding with strong evidence, not three findings. `references/reporting-standard.md`
 defines the model and the merge rules.
 
-### Stage 5 — Validate
+### Stage 5 — Validate: judge every finding on its own evidence
 
-For each candidate: locate the code, read the surrounding context, identify attacker-controlled
-input, trace it to the sink, search for compensating controls, then judge whether those controls can
-be bypassed. Record the control search even when it succeeds — "checked, mitigated by X" entries are
-what make a clean report credible. Assign confidence; suppress false positives with a recorded
-reason and a `suppression_kind` so they do not resurface as noise — and so the report files them as
-"not there", "not reachable" or "accepted" rather than as one undifferentiated pile. `references/validation-methodology.md` and
-`references/false-positive-handling.md`.
+This is the stage that decides whether the report is a security audit or a list of grep hits. Take
+the findings one at a time and adjudicate each one explicitly; none is carried forward because it is
+already in the dataset, and none is dropped because it is inconvenient.
+
+For each candidate:
+
+1. **Open the code**, not the scanner message: re-read the reported lines in the audited snapshot
+   (line numbers drift) and look at the enclosing function plus one hop of callers.
+2. **Name the attacker input** and trace it to the sink. If you cannot name the source, the finding
+   cannot be `validated`.
+3. **Search for the control** on the path — validation, parameterisation, escaping, ownership check,
+   middleware, framework default, deployment configuration — and judge whether it can be bypassed.
+   A control that exists but is ineffective does not mitigate.
+4. **Decide**, and record the decision. Every finding ends in exactly one of these five states:
+
+   | Outcome | `validation_status` | Also record | Filed under |
+   | - | - | - | - |
+   | Real, reachable, control missing or bypassable | `validated` | confidence, evidence, the controls searched | `validated/remediate-now/` or `validated/schedule/` by severity/priority |
+   | The detector misfired or the code is correct | `suppressed` | `suppression_kind: false_positive` + reason | `suppressed/false-positive/` |
+   | Real weakness no attacker can reach | `suppressed` | `suppression_kind: not_exploitable` + reason | `suppressed/not-exploitable/` |
+   | Real and reachable, signed off by the owner | `suppressed` | `suppression_kind: accepted_risk` + reason | `suppressed/accepted-risk/` |
+   | Evidence cannot settle it | `needs_review` | the open question, in `validation` | `needs-review/` |
+
+   `false_positive` means *the flaw is not there*; `not_exploitable` means *the flaw is real but
+   unreachable*; `accepted_risk` means *real, reachable, and knowingly retained*. They are three
+   different claims with three different follow-ups (fix the rule, delete the dead code, revisit the
+   decision), so a suppression with no `suppression_kind` is a gap and is filed as one.
+
+   A finding you never reached stays `unvalidated` and is filed under `unvalidated/`: a visible gap
+   in the audit, never a vulnerability and never a dismissal. It is never counted among the confirmed
+   findings; if one reaches delivery, the report gives it its own *Unassessed findings* section and
+   the run warns that the validation stage did not finish.
+5. **Record the search even when it came up empty.** "Checked, mitigated by the parameterised query
+   at line 91" is what makes a clean report credible, and it is what lets the next audit diff
+   against this one.
+
+Two errors are not symmetric: a false positive costs the report its credibility on every finding the
+reader checks afterwards, while a missed true positive ships a vulnerability. So verify before
+suppressing — read the framework's actual behaviour for the version in the repository rather than
+trusting a remembered default — and verify before promoting, because *"looks dangerous"* is a
+candidate, not a finding. `references/validation-methodology.md` has the confidence ladder and the
+compensating-control outcomes; `references/false-positive-handling.md` has the sanitiser catalogue
+and the look-alikes that must not be reported.
 
 ### Stage 6 — Score
 
@@ -134,12 +170,27 @@ PDF toolchain is missing, keep the Markdown and HTML and say so in the report an
 a missing PDF is a documented degradation, not a failure. `references/reporting-standard.md` defines
 the section order and the required content of each section.
 
+Two sections are mandatory and are the first thing a reader meets:
+
+* **An overall overview** — the audit in a few sentences: what was examined and at which commit, how
+  every finding was adjudicated (confirmed, open, suppressed by kind, never assessed), where the
+  risk actually sits, the highest score recorded, and where the reader should start.
+* **A detailed statistics section** — the numbers behind the verdict: every disposition and how many
+  findings sit in it, the severity / priority / confidence / category / CWE / language distributions,
+  the suppression kinds, the scoring arithmetic and the coverage of the tree.
+
+Both are computed from the dataset by `report_model.py` and rendered by the templates, so they
+cannot drift from the findings list. Never hand-write a number into a report, and never accept a
+statistics section you had to assemble yourself — if it is missing, the generator is out of date.
+
 ### Stage 8 — Verify before delivering
 
-Check that the three formats agree on every ID, total and severity distribution; that no unredacted
-secret appears anywhere in the output; that every finding has a location, CWE and evidence; and that
-the coverage section lists every tool and file type that was not examined. Deliver only after this
-passes. If it fails, fix the dataset and regenerate — never hand-edit a report.
+Check that the three formats agree on every ID, total and severity distribution; that the overview,
+the statistics and the summary table all describe the same dataset as the findings array; that no
+finding assessed by nothing (an `unvalidated` one) is presented as a confirmed vulnerability; that no
+unredacted secret appears anywhere in the output; that every finding has a location, CWE and evidence;
+and that the coverage section lists every tool and file type that was not examined. Deliver only after
+this passes. If it fails, fix the dataset and regenerate — never hand-edit a report.
 
 ## Script index
 
@@ -165,7 +216,8 @@ keeps this skill cheap to run.
 ## What the report must contain
 
 A verdict up front (what was audited, at which commit, what was found at each severity, and what
-could not be examined), then findings ordered by priority, each with location, evidence, CWE, OWASP
+could not be examined), then an overview of the whole audit and the detailed statistics behind it,
+then findings ordered by priority, each with location, evidence, CWE, OWASP
 mapping, CVSS vector and score, impact, attack scenario, and a concrete fix. Then the coverage and
 limitations section, the negative findings (checks that passed), and the methodology appendix. Never
 present a summary without the coverage section — the two are a single claim.
