@@ -528,7 +528,7 @@ def test_a_document_secret_never_reaches_a_deliverable(target, tmp_path):
     assert written, "no report files were written"
     names = {p.relative_to(outdir).as_posix() for p in written}
     assert "SECURITY-AUDIT-REPORT.md" in names
-    assert any(name.startswith("tickets/VULN-") for name in names), names
+    assert any(name.startswith("findings/") and name.endswith(".json") for name in names), names
     for path in written:
         text = path.read_text(encoding="utf-8", errors="replace")
         assert stripe not in text, path
@@ -536,10 +536,10 @@ def test_a_document_secret_never_reaches_a_deliverable(target, tmp_path):
     assert any("[REDACTED" in p.read_text(encoding="utf-8", errors="replace")
                for p in written), "redaction markers should be visible"
 
-    # The ticket is the file that used to print the key: check it on its own.
+    # The per-finding file is the one that used to print the key: check it alone.
     dataset = json.loads(validated.read_text())
     expected = {f["id"] + ".json" for f in dataset["findings"]}
-    tickets = sorted((outdir / "tickets").glob("VULN-*.json"))
+    tickets = sorted((outdir / "findings").rglob("VULN-*.json"))
     assert {t.name for t in tickets} == expected, [t.name for t in tickets]
     assert len(expected) >= 2, "the corpus should produce a secret finding per document"
     for ticket in tickets:

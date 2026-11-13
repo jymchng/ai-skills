@@ -973,6 +973,9 @@ def validate_dataset(root: str, dataset: Dict[str, Any], *, secrets: Sequence[st
             reason = "compensating control present on the path: %s (matched %r)" % (
                 effective[0]["control"], effective[0]["matched"])
             finding["suppression_reason"] = reason
+            # Not a false positive: the sink really is unsafe. Something else on
+            # the path neutralises it, so no attacker can reach it.
+            finding["suppression_kind"] = "not_exploitable"
             suppressions.append({"file": rel, "line": location.get("line_start"),
                                  "category": category, "reason": reason,
                                  "rule": "compensating-control"})
@@ -986,6 +989,9 @@ def validate_dataset(root: str, dataset: Dict[str, Any], *, secrets: Sequence[st
                 status = "suppressed"
                 reason = "path-based suppression: %s" % path_class
                 finding["suppression_reason"] = reason
+                # Code under a test path is reached by the test runner, not by an
+                # attacker: the weakness is real and unreachable in production.
+                finding["suppression_kind"] = "not_exploitable"
                 suppressions.append({"file": rel, "line": location.get("line_start"),
                                      "category": category, "reason": reason,
                                      "rule": "path-based-suppression"})

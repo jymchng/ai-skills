@@ -46,9 +46,9 @@ be re-entered at any stage without replaying everything before it.
 | 2 | Technology and attack surface | `technologies.json`, `attack_surface.json` — frameworks, entry points, routes, trust boundaries, auth middleware | `references/security-methodology.md` |
 | 3 | Detection | `raw_findings.json` — built-in analyzer hits plus normalized external scanner output | `references/vulnerability-taxonomy.md`, `references/language-security-guides.md`, `references/scanner-reference.md` |
 | 4 | Normalize and deduplicate | `findings.json` — one finding per real issue, provenance merged | `references/reporting-standard.md` |
-| 5 | Validate | `findings.json` — confidence assigned, compensating controls checked, obvious false positives suppressed with recorded reasons | `references/validation-methodology.md`, `references/false-positive-handling.md` |
+| 5 | Validate | `findings.json` — confidence assigned, compensating controls checked, obvious false positives suppressed with a recorded reason and kind (`false_positive`/`not_exploitable`/`accepted_risk`) | `references/validation-methodology.md`, `references/false-positive-handling.md` |
 | 6 | Score and prioritize | `findings.json` — CVSS 4.0 vector per finding, severity band, P0–P3 priority | `references/severity-scoring.md` |
-| 7 | Report | `report.md`, `report.html`, `report.pdf` from the one dataset | `references/reporting-standard.md` |
+| 7 | Report | `report.md`, `report.html`, `report.pdf` from the one dataset, plus one JSON per finding under `findings/` filed by verdict then urgency | `references/reporting-standard.md` |
 | 8 | Verify | `verification.json` — cross-format consistency, coverage accounting, no unredacted secrets | `references/reporting-standard.md` |
 
 See `docs/RESEARCH.md` in this skill's source repository for the evidence behind each stage. That
@@ -112,7 +112,8 @@ For each candidate: locate the code, read the surrounding context, identify atta
 input, trace it to the sink, search for compensating controls, then judge whether those controls can
 be bypassed. Record the control search even when it succeeds — "checked, mitigated by X" entries are
 what make a clean report credible. Assign confidence; suppress false positives with a recorded
-reason so they do not resurface as noise. `references/validation-methodology.md` and
+reason and a `suppression_kind` so they do not resurface as noise — and so the report files them as
+"not there", "not reachable" or "accepted" rather than as one undifferentiated pile. `references/validation-methodology.md` and
 `references/false-positive-handling.md`.
 
 ### Stage 6 — Score

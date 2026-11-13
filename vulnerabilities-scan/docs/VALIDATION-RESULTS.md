@@ -70,21 +70,21 @@ of intent.
 | 10 | Deduplication | `scripts/deduplicate_findings.py` | cross-analyzer merges by location/CWE/root cause, provenance preserved |
 | 11 | Validation and scoring | `scripts/validate_findings.py` | confidence assignment, compensating-control suppression, CVSS 4.0, evidence capture, redaction |
 | 12 | Templates | `templates/report.md.j2`, `templates/report.html.j2`, `templates/report.css` | self-contained HTML, no CDN, escaped untrusted content, print styles |
-| 13 | Renderers | `scripts/generate_markdown.py`, `generate_html.py`, `generate_pdf.py`, `generate_json.py`, `generate_reports.py` | one dataset rendered to every format, plus tickets, `findings-index.json` and `report-manifest.json` |
+| 13 | Renderers | `scripts/generate_markdown.py`, `generate_html.py`, `generate_pdf.py`, `generate_json.py`, `generate_reports.py` | one dataset rendered to every format, plus one JSON per finding under `findings/` (filed by verdict, then urgency), `findings-index.json` and `report-manifest.json` |
 | 14 | Report validator | `scripts/validate_reports.py` | exit 0 with 0 problems on both corpora (section 4); `--require-pdf` escalates a missing PDF |
-| 15 | Fixtures and test suite | `tests/` | 15 test modules plus `conftest.py`, 74 fixture files (34 vulnerable-app, 34 secure-app, 2 expectation data), 400 tests |
+| 15 | Fixtures and test suite | `tests/` | 16 test modules plus `conftest.py`, 74 fixture files (34 vulnerable-app, 34 secure-app, 2 expectation data), 433 tests |
 | 16 | Research and validation record | `docs/RESEARCH.md`, `docs/RESEARCH-SOURCES.json`, `docs/VALIDATION-RESULTS.md`, `README.md` | dated sources with SHA-256 digests; this document; the human-facing install/use guide |
 
 Re-measure the inventory rather than trusting the table:
 
 ```bash
-git ls-files | wc -l                        # 122 tracked files
+git ls-files | wc -l                        # 132 tracked files
 git ls-files references | wc -l             # 8
-git ls-files tests/test_*.py | wc -l        # 14
+git ls-files tests/test_*.py | wc -l        # 15
 git ls-files tests/fixtures | wc -l         # 74
 for s in scripts/*.py; do python3 "$s" --help >/dev/null || echo "no --help: $s"; done
                                             # prints nothing: all 17 modules accept --help
-python3 -m pytest tests -q                  # 400 passed
+python3 -m pytest tests -q                  # 433 passed
 ```
 
 Everything after this section is measurement. This section is the inventory that measurement
@@ -95,7 +95,7 @@ attaches to.
 ## 3. Test suite
 
 ```
-400 passed in 56.42s
+433 passed in 50.83s
 ```
 
 | Test module | Tests | What it pins |
@@ -104,7 +104,7 @@ attaches to.
 | `test_validate_findings.py` | 46 | Evidence re-reading, path policy, redaction, suppression, leak guard |
 | `test_finding_model.py` | 43 | Finding schema, IDs, placeholder handling, ordering |
 | `test_deduplicate_findings.py` | 27 | Fingerprints, line windows, cross-file merges, provenance |
-| `test_report_generation.py` | 25 | Markdown/HTML/JSON renderers, per-finding JSON, index, manifest, determinism |
+| `test_report_generation.py` | 26 | Markdown/HTML/JSON renderers, per-finding JSON, index, manifest, determinism |
 | `test_scanner_orchestrator.py` | 22 | Tool discovery, timeouts, unavailable-tool accounting |
 | `test_builtin_analyzers.py` | 22 | Rule matching per category, secure look-alike silence, self-scan precision |
 | `test_attack_surface.py` | 22 | Route/framework extraction, auth heuristics, route-bearing code no rule can enumerate |
@@ -115,7 +115,8 @@ attaches to.
 | `test_redaction_markers.py` | 6 | One marker spelling per credential shape, identical across all three redacting stages |
 | `test_push_protection_literals.py` | 5 | No live-credential shape anywhere in the tracked tree |
 | `test_install_scanners.py` | 84 | Installer planning per OS, the pipx/Node bootstrap, the elevation rule, archive extraction safety, and that the wrappers delegate instead of carrying their own matrix |
-| **Total** | **400** | |
+| `test_finding_buckets.py` | 32 | The finding taxonomy: the mapping is total and mutually exclusive, severity beats priority inside `validated/`, a suppression is filed by kind, every leaf directory is written, a mis-filed or stale file is caught |
+| **Total** | **433** | |
 
 Every module runs offline and writes only under `.scratch/` (git-ignored).
 
@@ -139,7 +140,7 @@ categories covered.
 | Analyzers | 34 files | **152 findings** |
 | Dedupe | 152 | **135 findings** (17 duplicates removed, 0 without provenance) |
 | Validation | 135 | 135 findings; 3 suppressed; 3 secrets redacted; **0 leaks** |
-| Reports | 135 | markdown + html + json + index + manifest + 135 per-finding tickets |
+| Reports | 135 | markdown + html + json + index + manifest + 135 per-finding JSON files: 84 `validated/remediate-now`, 9 `validated/schedule`, 39 `needs-review`, 3 `suppressed/not-exploitable`, 0 elsewhere |
 
 The 152 → 135 drop is the deduplicator merging adjacent same-fingerprint reports (e.g. the
 Terraform misconfiguration cluster in `infra/terraform/main.tf`), not findings being dropped for
@@ -225,7 +226,7 @@ reports/SECURITY-AUDIT-REPORT.html   106 <article class="finding">
 reports/SECURITY-AUDIT-REPORT.json   108 findings
 reports/findings-index.json          108 entries
 reports/report-manifest.json         size + sha256 for every artefact above
-reports/tickets/VULN-*.json          108 files (one per finding)
+reports/findings/<bucket>/VULN-*.json  one file per finding, filed by verdict then urgency
 ```
 
 Exact byte counts are deliberately not quoted here: the rendered reports embed the audited
@@ -280,8 +281,8 @@ own file. This is the contract asserted by `test_report_generation.py` and
 
 | File | Contents | Written by |
 |---|---|---|
-| `findings-index.json` | One entry per finding: `id`, `kind`, `file`, `line_start`, `line_end`, `category`, `title`, `severity`, `confidence`, `priority`, `validation_status`, `ticketable`, `ticketable_reason`, `ticket{path, sha256}` — plus `totals` | `generate_reports.py` |
-| `tickets/<ID>.json` | The full per-finding description: location, evidence with line context, CVSS 4.0 vector and score, remediation, references, provenance | `generate_reports.py` |
+| `findings-index.json` | One entry per finding: `id`, `kind`, `file`, `line_start`, `line_end`, `category`, `title`, `severity`, `confidence`, `priority`, `validation_status`, `disposition` (the bucket it was filed in), `ticketable`, `ticketable_reason`, `json{path, sha256, bytes, fingerprint}` — plus `totals`, including `totals.by_disposition` | `generate_reports.py` |
+| `findings/<verdict>/[<urgency>/]<ID>.json` | The full per-finding description: location, evidence with line context, CVSS 4.0 vector and score, remediation, references, provenance, and the `disposition` it was filed under | `generate_reports.py` |
 | `report-manifest.json` | The aggregate record: run identity in `meta` (repository, commit, branch, dirty state, audit date, skill version, dataset stage and tool), counts by severity and validation status (`counts.by_severity_detail` breaks severity down by validated / needs-investigation / suppressed), and every artefact with its size and SHA-256 | `generate_reports.py` |
 | `SECURITY-AUDIT-REPORT.json` | Aggregate report document (the same content the Markdown and HTML render) | `generate_reports.py` |
 
@@ -296,8 +297,11 @@ Two things in that area are deliberately *not* written into the report directory
   The verdict still carries a SHA-256 for the dataset, the manifest, each rendered format and the
   index, so a delivered report set can be proven to belong to the dataset it claims.
 
-Index totals agree with the dataset in both corpora: 108 findings / 78 ticketable / 78 validated /
-28 needs-investigation / 2 suppressed, and 6 / 4 / 4 / 1 / 1.
+Index totals agree with the dataset in both corpora: 135 findings / 93 ticketable / 93 validated /
+39 needs-investigation / 3 suppressed / 0 unvalidated, and 6 / 4 / 4 / 1 / 1 / 0. `totals.by_disposition`
+splits the first corpus into 84 `validated/remediate-now`, 9 `validated/schedule`, 39 `needs-review` and
+3 `suppressed/not-exploitable`, and the per-leaf counts match the files on disk exactly — which is what
+`validate_reports.py` checks rather than trusts.
 
 ---
 
@@ -317,14 +321,24 @@ The suite was written to break the pipeline, and it did. Each fix below is now p
 | 8 | Not from this run: `attack_surface.py` reported nothing at all for a convention-routed ASP.NET Core controller | The C# fixtures route by convention (no `[HttpGet]`/`[Route]`, a `.csproj` with no ASP.NET package reference), so they produced zero entry points *and* zero limitations: an unenumerable web app read exactly like an app with no endpoints, and the limitation that existed only fired for frameworks stage 2a *named* | New `CONTROLLER_STYLE_RULES` recognises a `Controller`/`ControllerBase`-derived class in the code-only view, `CONTROLLER_FRAMEWORK_SIGNALS` catches `using Microsoft.AspNetCore.Mvc` and `[ApiController]` when no route matched, and each such file becomes an `unenumerable_routes` record (`file`, `line`, `basis`, `class`, bounded `candidate_actions`, never an invented path) plus one aggregated limitation that says a zero-route result is a coverage gap. `test_attack_surface.py` pins both fixtures' gap, the attribute-routed negative case (a real route is never relabelled as a gap), the framework-signal-only case, the commented-out-controller negative case, and that no record carries a `path` |
 | 9 | Pipeline files and CloudFormation templates were classified as plain config | `ci/.gitlab-ci.yml` and `ci/Jenkinsfile` fell through to the ``config`` bucket because the anchored CI pattern was matched against the whole relative path and never the file name, so the CI rules -- keyed on the iac bucket -- could not see them; a CloudFormation template inherited ``kubernetes`` from whichever directory held it, and ``_language_matches`` then skipped every ``yaml``-keyed rule that did not apply | ``CI_FILE_RE`` is matched against the file name, a new ``CFN_DIR_RE`` labels CloudFormation directories ``cloudformation``, and ``IAC_LANGUAGES`` learned ``cloudformation`` and ``groovy``; `test_scan_families.py` pins both classifications |
 | 10 | Three rules matched a sentence instead of a call | ``system("date")`` was reported as command injection (the pattern accepted a string literal as a "variable"), ``cap_drop: - ALL`` was reported as adding every capability (the pattern could not tell add from drop), and ``WHERE name = 'xp_cmdshell'`` was reported as invoking it (the pattern matched the bare word, not the ``EXEC`` call) -- all three found by the secure look-alikes, which exist for exactly this | The C rule now requires an identifier immediately after the call parenthesis, ``k8s-caps`` gained a ``cap_add``/``capabilities`` context anchor, and ``sql-xp-cmdshell`` requires the ``EXEC ... xp_cmdshell`` form; each has its own negative test |
+| 11 | The three-bucket layout answered two questions with one name | A confirmed `Critical` sat under a directory called `review-required`, which reads as a question rather than an emergency; and a finding nobody had assessed fell through to `optional-hardening`, a name that promises a discretionary fix for something that may not be real | The layout is now two levels: the verdict (`validated/`, `needs-review/`, `unvalidated/`, `suppressed/`) and, inside `validated/`, the urgency (`remediate-now/`, `schedule/`). Assignment lives in one function, `report_model.finding_bucket`, which the generator, the validator and the docs all use, so the tree, the `disposition` field and the register cannot disagree; `test_finding_buckets.py` proves the mapping total and mutually exclusive |
+| 12 | A suppression could not say what kind it was | "False positive", "not exploitable" and "accepted risk" were one bucket with a prose reason, so the reader had to open the file to learn whether the code was fine or the code was broken and someone had signed it off | `suppression_kind` (`false_positive`/`not_exploitable`/`accepted_risk`) is a schema field, `validate_findings.py` sets `not_exploitable` for a compensating control and for a test-path suppression, and each kind has its own directory. A suppression that records no kind is filed under `suppressed/unspecified/` and the run warns instead of guessing |
+| 13 | Any finding in the `findings` list was rendered as ticketable | `build_ticket` defaulted `ticketable=True`, so a finding that reached stage 6 with `validation_status: unvalidated` -- a validation stage that did not run, or a raw analyzer output fed straight to the generator -- would have been posted to an issue tracker as a vulnerability | `ticketable` is now derived from the bucket, never from the list the finding arrived in; unassessed findings are filed under `unvalidated/`, kept out of the report's `findings` section, and reported in the run's warnings by `validate_reports.py` |
+| 14 | Regenerating a report left the previous filing behind | A finding that changed bucket, or was fixed and no longer reported, kept its old file in the old directory: two files for one id with opposite advice, and the validator counted an unexplained extra | `generate_json.py` prunes every per-finding `.json` it did not write in this run and reports what it removed; `test_regenerating_removes_a_file_the_run_no_longer_produces` pins it |
+| 15 | A dataset whose `evidence` is a plain string crashed the JSON generator | The schema types `evidence` as a string, but `generate_json._description_markdown` assumed the display layer's dict and raised `AttributeError: 'str' object has no attribute 'get'` -- reachable by running the generator on a hand-written dataset | The function accepts either shape and renders the text; found while writing this round's tests |
 
 Defect 5 came from a requirements change mid-validation (every finding must have its own JSON,
 aggregate metadata its own file) and is the reason `references/reporting-standard.md` gained its
 "Machine-readable deliverables" subsection.
 
-Defect 6 was found after this run, by pointing the tool at itself. Its fix changes no count in this
-document: both corpora still deliver 108 and 6 findings with byte-identical
-(id, category, severity, confidence, status) tuples. It is recorded here because the previous
+Defect 6 was found after this run, by pointing the tool at itself. Its fix changes no count: both
+corpora deliver the same findings as before it, with byte-identical
+(id, category, severity, confidence, status) tuples.
+
+Defects 11-15 come from the taxonomy change: the layout now answers two questions instead of one, a
+suppression records which kind it was, and the per-finding tree is pruned to the current run. None of
+them changes a severity, a count or a verdict; they change what a recipient can tell without opening
+a file. It is recorded here because the previous
 behaviour was a real precision bug in the stage this document treats as ground truth for
 "no visible authentication".
 

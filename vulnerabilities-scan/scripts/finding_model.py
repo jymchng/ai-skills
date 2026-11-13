@@ -56,6 +56,15 @@ CONFIDENCES: Tuple[str, ...] = ("CONFIRMED", "HIGH", "MEDIUM", "LOW")
 VALIDATION_STATUSES: Tuple[str, ...] = ("unvalidated", "validated", "needs_review", "suppressed")
 PRIORITIES: Tuple[str, ...] = ("P0", "P1", "P2", "P3")
 
+#: Why a suppressed finding was closed. ``false_positive`` (the flaw is not
+#: there), ``not_exploitable`` (the flaw is there, no attacker can reach it) and
+#: ``accepted_risk`` (real, reachable, and the owner signed it off) are three
+#: different decisions with three different follow-ups. The report files each
+#: under its own directory, so a reader never has to open a file to learn which
+#: was meant. Optional in the schema, so a dataset written before the field
+#: existed still validates; absent, the finding is filed as ``unspecified``.
+SUPPRESSION_KINDS: Tuple[str, ...] = ("false_positive", "not_exploitable", "accepted_risk")
+
 #: Sort weight: Critical first. Used for id assignment and report ordering.
 SEVERITY_RANK: Dict[str, int] = {name: i for i, name in enumerate(SEVERITIES)}
 
@@ -236,6 +245,14 @@ def _fallback_errors(dataset: Dict[str, Any]) -> List[str]:
             errors.append(f"{at}.sources: every entry needs a 'tool'")
         if f.get("validation_status") == "suppressed" and not f.get("suppression_reason"):
             errors.append(f"{at}: suppressed finding requires 'suppression_reason'")
+        kind = f.get("suppression_kind")
+        if kind is not None:
+            if kind not in SUPPRESSION_KINDS:
+                errors.append(f"{at}.suppression_kind: {kind!r} not in {SUPPRESSION_KINDS}")
+            elif f.get("validation_status") != "suppressed":
+                errors.append(f"{at}.suppression_kind: only a suppressed finding may "
+                              f"record one, this one is "
+                              f"{f.get('validation_status')!r}")
         for field in ("title", "evidence", "description", "impact", "attack_scenario",
                       "recommended_fix", "language"):
             value = f.get(field)

@@ -33,6 +33,8 @@ enforceable contract; this table is its documentation.
 | 20 | `priority` | enum | `P0`–`P3`, with `priority_factors: [...]` explaining the ranking |
 
 Additional non-mandatory keys are allowed: `scoring: "unscored"`, `suppression_reason`,
+`suppression_kind` (`false_positive`/`not_exploitable`/`accepted_risk`, required in practice on a
+suppressed finding because it decides which `suppressed/` bucket the file is filed in),
 `priority_factors`, `locations[]` (multi-site findings), `negative` (for the negative-findings set).
 
 ## 2. Report structure (identical in all three formats)
@@ -65,53 +67,93 @@ them are written on every run:
 | `SECURITY-AUDIT-REPORT.json` | The whole report: counts, verdict, coverage, methodology, and one ticket object per validated finding |
 | `findings.json` | The validated dataset — the authority every other artefact is derived from |
 | `findings-index.json` | The register of **every** finding: id, file, line, category, severity, confidence, priority, validation status, `disposition`, whether it is ticketable and why not, and the path plus SHA-256 of that finding's own file |
-| `findings/review-required/VULN-NNN.json` | Exactly one file per finding whose remediation a person must decide on |
-| `findings/optional-hardening/VULN-NNN.json` | Exactly one file per finding whose fix is discretionary |
-| `findings/no-action-suppressed/VULN-NNN.json` | Exactly one file per finding recorded and closed without action |
+| `findings/validated/remediate-now/VULN-NNN.json` | Exactly one file per confirmed vulnerability that owes action now |
+| `findings/validated/schedule/VULN-NNN.json` | Exactly one file per confirmed vulnerability whose fix can be scheduled |
+| `findings/needs-review/VULN-NNN.json` | Exactly one file per finding the evidence could not settle |
+| `findings/unvalidated/VULN-NNN.json` | Exactly one file per finding nothing assessed — a gap in the audit, not a vulnerability |
+| `findings/suppressed/false-positive/VULN-NNN.json` | Exactly one file per finding that was reported and is not there |
+| `findings/suppressed/not-exploitable/VULN-NNN.json` | Exactly one file per real weakness no attacker can reach |
+| `findings/suppressed/accepted-risk/VULN-NNN.json` | Exactly one file per real, reachable weakness the owner accepted |
+| `findings/suppressed/unspecified/VULN-NNN.json` | Exactly one file per suppression that never recorded which of the three it was |
 
 ### One file per finding, filed under `findings/`
 
-Every finding — validated, needs-investigation and suppressed alike — gets its own `.json` file. The
-files live in a `findings/` directory, never in a flat pile: a single directory puts a suppressed
-accepted risk next to a confirmed Critical and the recipient cannot tell them apart without opening
-both.
+Every finding — validated, needs-investigation, unassessed and suppressed alike — gets its own
+`.json` file. The files live in a `findings/` directory, never in a flat pile: a single directory puts
+a suppressed accepted risk next to a confirmed Critical and the recipient cannot tell them apart
+without opening both.
 
 ```
 reports/
 ├── findings-index.json
 └── findings/
-    ├── review-required/VULN-004.json
-    ├── optional-hardening/VULN-019.json
-    └── no-action-suppressed/VULN-007.json
+    ├── validated/
+    │   ├── remediate-now/VULN-004.json
+    │   └── schedule/VULN-019.json
+    ├── needs-review/VULN-031.json
+    ├── unvalidated/
+    └── suppressed/
+        ├── false-positive/VULN-007.json
+        ├── not-exploitable/
+        ├── accepted-risk/
+        └── unspecified/
 ```
 
 1. **One file per finding.** No finding may be reachable only by parsing the aggregate report. The file
    name is `VULN-NNN.json` and the number in the name is the finding's own `id` — one file, one finding,
    no `unassigned.json` collision.
-2. **Exactly one bucket.** Each finding is written to exactly one of the three subdirectories: never two,
-   never zero. Assignment is deterministic, first match wins:
+2. **Two questions, two levels.** The layout answers *is this a vulnerability?* with the first directory
+   and *what should be done, and when?* with the second. One level cannot answer both: a name like
+   `review-required/` says nothing about whether the finding is real, and it undersells the worst case —
+   a confirmed Critical filed under "review required" reads as a question, not as an emergency. Urgency
+   is a subdirectory of `validated/` precisely because asking how urgently to fix something nobody has
+   confirmed is a question with no honest answer.
+3. **Exactly one bucket.** Each finding is written to exactly one leaf directory: never two, never zero.
+   Assignment is deterministic, first match wins, and reads only fields the schema requires:
 
    | Order | Bucket | Assigned when |
    | - | - | - |
-   | 1 | `no-action-suppressed/` | `validation_status: suppressed` — accepted risk, compensating control, unreachable code |
-   | 2 | `review-required/` | `validation_status: needs_review`, or a validated finding with severity `Critical`/`High`/`Medium`, or `priority` `P0`–`P2` |
-   | 3 | `optional-hardening/` | everything else: validated `Low`/`Informational`, `P3`, or defence-in-depth with no exploitable path |
+   | 1 | `validated/remediate-now/` | `validation_status: validated` and severity `Critical`/`High`/`Medium` **or** priority `P0`–`P2` |
+   | 2 | `validated/schedule/` | `validation_status: validated` and severity `Low`/`Informational` **and** priority `P3` |
+   | 3 | `needs-review/` | `validation_status: needs_review` |
+   | 4 | `unvalidated/` | `validation_status: unvalidated`, or no usable status at all |
+   | 5 | `suppressed/false-positive/` | `suppression_kind: false_positive` |
+   | 6 | `suppressed/not-exploitable/` | `suppression_kind: not_exploitable` |
+   | 7 | `suppressed/accepted-risk/` | `suppression_kind: accepted_risk` |
+   | 8 | `suppressed/unspecified/` | suppressed, with no `suppression_kind` recorded |
 
-   `optional-hardening/` means "schedule it if you like", never "ignore it": the file keeps
-   `ticketable: true` and its full record. Only `no-action-suppressed/` says an action was deliberately
-   declined, and its file carries `suppression_reason`.
-3. **The bucket is stated, not inferred.** It is repeated inside the file as `disposition` and in
+   *Severity before priority.* A `Medium` on `P3` is filed as `remediate-now`: priority is a scheduling
+   input, and a confirmed Medium vulnerability that is cheap to fix is still a confirmed Medium
+   vulnerability. The reverse also holds — a `Low` promoted to `P1` owes action.
+   `validated/schedule/` means "schedule it", never "ignore it": the file keeps `ticketable: true` and
+   its full record. Only `suppressed/` says an action was deliberately declined.
+4. **A suppression says which kind.** `false_positive` (the flaw is not there — detector misfired, code
+   correct), `not_exploitable` (the weakness is real but unreachable: dead code, test-only path, an
+   effective control on the path) and `accepted_risk` (real, reachable, signed off) are three different
+   claims with three different follow-ups: fix the rule, delete the dead code, or revisit the decision.
+   Filing them together hides which one is being made. A suppression with no `suppression_kind` is filed
+   under `unspecified/` and the validator warns: the bucket exists so the gap is visible, not so it can
+   be filled by guessing.
+5. **`unvalidated/` is an alarm, not a category to aim for.** A finding nothing assessed must never be
+   presented as a vulnerability, and must not be dropped either — it is still a finding with evidence.
+   A non-empty `unvalidated/` means the validation stage did not reach delivery and the validator says so
+   in the run's warnings.
+6. **The bucket is stated, not inferred.** It is repeated inside the file as `disposition` and in
    `findings-index.json` as `disposition` alongside `json.path`, so a consumer never has to parse a
    directory name to know why a finding sits where it does.
-4. **All three subdirectories exist on every run**, even when empty, so a missing bucket reads as a zero
-   count rather than as a stage that did not run.
-5. **Actionability is carried inside the file.** `ticketable` is true only for a validated finding and
-   `ticketable_reason` says why the others are not, so an issue tracker never receives an unvalidated
-   pattern match.
-6. **The index is checked, not trusted.** `validate_reports.py` proves each entry points at a file that
-   exists, parses, names the same finding, sits in the bucket its `disposition` implies, and still
-   matches the recorded digest — a stale file from an earlier run must not pass as a delivered finding,
-   and a file in the wrong bucket must not pass as correctly filed.
+7. **Every leaf directory exists on every run**, nested ones included, even when empty, so a missing
+   bucket reads as a zero count rather than as a stage that did not run.
+8. **The tree describes this run.** Regenerating into an existing directory removes per-finding files the
+   run did not write. A finding that moved bucket — downgraded, upgraded, or newly suppressed — would
+   otherwise exist twice, in two directories, with opposite advice; the run reports what it pruned.
+9. **Actionability is carried inside the file.** `ticketable` is true only for a finding in a
+   `validated/` bucket and `ticketable_reason` says why the others are not, so an issue tracker never
+   receives an unvalidated pattern match.
+10. **The index is checked, not trusted.** `validate_reports.py` proves each entry points at a file that
+    exists, parses, names the same finding, sits in the bucket its `disposition` implies, repeats that
+    `disposition` inside the file, and still matches the recorded digest — a stale file from an earlier
+    run must not pass as a delivered finding, and a correct file in the wrong directory must not pass as
+    correctly filed.
 
 
 ## 3. Markdown rules

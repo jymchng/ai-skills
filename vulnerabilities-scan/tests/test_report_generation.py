@@ -345,8 +345,22 @@ class TestOneDataset:
         assert [ticket["finding_id"] for ticket in document["findings"]] == \
                ["VULN-001", "VULN-002"]
 
-    def test_each_finding_gets_its_own_ticket(self, tmp_path):
+    def test_each_finding_gets_its_own_file(self, tmp_path):
         dataset = _dataset([_finding(id=None), _finding(id=None, title="Second")])
         _generate_set(dataset, tmp_path)
-        tickets = os.listdir(os.path.join(str(tmp_path), "tickets"))
-        assert sorted(tickets) == ["VULN-001.json", "VULN-002.json"]
+        files = sorted(path.name for path in
+                       (tmp_path / "findings").rglob("*.json"))
+        assert files == ["VULN-001.json", "VULN-002.json"]
+
+    def test_findings_are_filed_by_verdict_then_urgency(self, tmp_path):
+        dataset = _dataset([
+            _finding(id=None),
+            _finding(id=None, title="Low one", severity="Low", priority="P3",
+                     cvss_score=2.0,
+                     cvss_vector="CVSS:4.0/AV:N/AC:H/AT:N/PR:H/UI:P/VC:L/VI:N/VA:N"
+                                 "/SC:N/SI:N/SA:N"),
+        ])
+        _generate_set(dataset, tmp_path)
+        buckets = sorted(path.parent.relative_to(tmp_path / "findings").as_posix()
+                         for path in (tmp_path / "findings").rglob("*.json"))
+        assert buckets == ["validated/remediate-now", "validated/schedule"]

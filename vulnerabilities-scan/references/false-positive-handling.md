@@ -29,9 +29,15 @@ developer can dismiss in one glance. This file is the suppression discipline.
 7. **Duplicate of a stronger finding** → merge; never suppress silently, provenance must survive.
 8. **Operator-declared accepted risk** → suppress with `accepted_risk` and the justification.
 
-Every suppression writes `{reason, rule, location, decided_at}` into the dataset. A suppressed
-finding is **not deleted**: the next audit should show "still suppressed, same reason", which is how
-suppressions themselves get audited.
+Every suppression writes `{reason, kind, rule, location, decided_at}` into the dataset. `kind` is one
+of `false_positive` (the weakness is not there: rules 1–3, 5, 7), `not_exploitable` (the weakness is
+real but unreachable or controlled: rules 4, 6) or `accepted_risk` (rule 8). It is not decoration:
+the report files each kind in its own directory under `suppressed/`, so a reader can tell "the
+scanner was wrong" from "we know, and we are living with it" without opening the file. A suppression
+with no kind is filed under `suppressed/unspecified/` and the run warns about it.
+
+A suppressed finding is **not deleted**: the next audit should show "still suppressed, same reason",
+which is how suppressions themselves get audited.
 
 ## 3. Sanitiser catalogue by sink
 

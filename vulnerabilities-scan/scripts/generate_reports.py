@@ -55,7 +55,7 @@ ALL_FORMATS = ("markdown", "html", "pdf", "json")
 def generate_all(model: Mapping[str, Any], outdir: str,
                  formats: Sequence[str] = ALL_FORMATS,
                  dataset_path: Optional[str] = None,
-                 ticket_dir: Optional[str] = None,
+                 findings_dir: Optional[str] = None,
                  keep_build: bool = False) -> Dict[str, Any]:
     """Render every requested format from one view model, then write a manifest."""
     rm.ensure_outdir(outdir)
@@ -72,12 +72,12 @@ def generate_all(model: Mapping[str, Any], outdir: str,
         elif name == "html":
             results[name] = gh.generate(model, outdir)
         elif name == "json":
-            results[name] = gj.generate(model, outdir, ticket_dir=ticket_dir)
+            results[name] = gj.generate(model, outdir, findings_dir=findings_dir)
         elif name == "pdf":
             results[name] = gp.generate(model, outdir, keep_build=keep_build)
 
     findings = [entry for entry in model.get("findings") or [] if isinstance(entry, dict)]
-    tickets = results.get("json", {}).get("tickets") or []
+    per_finding = results.get("json", {}).get("findings") or []
     manifest = {
         "schema_version": "1.0",
         "kind": "security-audit-report-manifest",
@@ -96,14 +96,15 @@ def generate_all(model: Mapping[str, Any], outdir: str,
                            if key in ("format", "status", "path", "bytes", "sha256",
                                       "lines", "pages", "engine", "fonts", "reason",
                                       "detail", "log", "preserved", "document",
-                                      "ticket_dir")}
+                                      "findings_dir", "by_disposition")}
                     for name, result in results.items()},
-        "tickets": tickets,
-        # The per-finding register: one entry per finding, pointing at the JSON
-        # file written for it. ``tickets`` above is the same set with digests;
-        # this record makes the index a first-class deliverable of the run.
+        "findings": per_finding,
+        # The per-finding register: one entry per finding, with the bucket it was
+        # filed under and the path of the file written for it. ``findings`` above
+        # is the same set with digests; this record makes the index a
+        # first-class deliverable of the run.
         "findings_index": results.get("json", {}).get("index") or {},
-        "ticket_dir": results.get("json", {}).get("ticket_dir"),
+        "findings_dir": results.get("json", {}).get("findings_dir"),
         "failed": sorted(name for name, result in results.items()
                          if result.get("status") == "failed"),
         "unavailable": sorted(name for name, result in results.items()
@@ -128,7 +129,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--formats", default=",".join(ALL_FORMATS),
                         help="comma-separated subset of %s (default: all)"
                              % ",".join(ALL_FORMATS))
-    parser.add_argument("--ticket-dir", help="directory for the per-finding JSON tickets")
+    parser.add_argument("--findings-dir", "--ticket-dir", dest="findings_dir",
+                        help="directory for the per-finding JSON files")
     parser.add_argument("--keep-build", action="store_true",
                         help="keep the LaTeX build inputs after a successful PDF")
     return parser
@@ -139,7 +141,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     formats: List[str] = [part.strip() for part in args.formats.split(",") if part.strip()]
     model = rm.model_from_args(args)
     manifest = generate_all(model, args.outdir, formats, dataset_path=args.dataset,
-                            ticket_dir=args.ticket_dir, keep_build=args.keep_build)
+                            findings_dir=args.findings_dir, keep_build=args.keep_build)
     rm.emit(manifest, args.indent)
     return 1 if manifest["failed"] else 0
 

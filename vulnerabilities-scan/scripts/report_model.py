@@ -648,6 +648,7 @@ def _display(finding: Mapping[str, Any]) -> Dict[str, Any]:
                              _as_list(finding.get("priority_factors"))[-_PRIORITY_FACTORS_LIMIT:]],
         "sites": _sites(finding),
         "suppression_reason": finding.get("suppression_reason") or "",
+        "suppression_kind": finding.get("suppression_kind") or "",
         "in_test_path": bool(finding.get("in_test_path")),
         "validation": str(finding.get("validation") or ""),
         "anchor": "vuln-%s" % str(finding.get("id") or "000").lower().replace("vuln-", ""),
@@ -993,6 +994,104 @@ def _policy_text(policy: Mapping[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# The finding taxonomy: two axes, never one
+# --------------------------------------------------------------------------- #
+
+#: Directory, under the report output directory, holding one JSON file per finding.
+FINDINGS_DIRNAME = "findings"
+
+#: The **verdict** axis: what the evidence says about whether a vulnerability
+#: exists. Every value of ``validation_status`` maps onto exactly one verdict, so
+#: the mapping is total and never has to guess.
+VERDICTS: Tuple[str, ...] = ("validated", "needs-review", "unvalidated", "suppressed")
+
+#: The **action** axis: what the recipient should do, and how soon. It is only
+#: meaningful once the verdict is ``validated``. Asking how urgently to fix
+#: something nobody has confirmed is a question with no honest answer, so these
+#: live *inside* ``validated/``.
+ACTIONS: Tuple[str, ...] = ("remediate-now", "schedule")
+
+#: Why a finding was closed without action. ``false_positive`` and
+#: ``accepted_risk`` are opposite claims ("the code is fine" versus "the code is
+#: broken and the owner knows) and a reader must not have to open the file to
+#: tell them apart.
+SUPPRESSION_KINDS: Tuple[str, ...] = ("false_positive", "not_exploitable", "accepted_risk")
+
+#: ``suppression_kind`` -> directory name under ``suppressed/``.
+SUPPRESSION_BUCKETS = {
+    "false_positive": "false-positive",
+    "not_exploitable": "not-exploitable",
+    "accepted_risk": "accepted-risk",
+}
+
+#: A suppressed finding whose kind was never recorded. It is a gap in the
+#: dataset, not a kind of finding, and naming it keeps the taxonomy total
+#: instead of filing it somewhere that would be a guess.
+SUPPRESSION_UNSPECIFIED = "unspecified"
+
+#: Severity and priority thresholds above which a validated finding owes action
+#: now rather than at the next convenient moment.
+SEVERITIES_OWING_ACTION: Tuple[str, ...] = ("Critical", "High", "Medium")
+PRIORITIES_OWING_ACTION: Tuple[str, ...] = ("P0", "P1", "P2")
+
+#: Every leaf directory, in delivery order: the ones that demand attention
+#: first. Written out on every run, so an empty bucket reads as a zero count and
+#: not as a stage that never ran.
+FINDING_BUCKETS: Tuple[str, ...] = tuple(
+    "%s/%s" % (verdict, action) for verdict, action in (
+        ("validated", "remediate-now"),
+        ("validated", "schedule"),
+    )
+) + ("needs-review", "unvalidated") + tuple(
+    "suppressed/%s" % SUPPRESSION_BUCKETS[kind] for kind in SUPPRESSION_KINDS
+) + ("suppressed/%s" % SUPPRESSION_UNSPECIFIED,)
+
+
+def finding_bucket(finding: Mapping[str, Any]) -> str:
+    """The one bucket this finding is filed in, as a ``dir/dir`` path.
+
+    Deterministic and total: it reads only fields the schema already requires,
+    the first matching rule wins, and a finding with no usable verdict is filed
+    as ``unvalidated/`` rather than being called a vulnerability or dropped.
+
+    The verdict is decided before the action, which is the whole point of the
+    split: a validated Critical and an unassessed pattern match used to land in
+    the same place, and the reader could not tell which was which without
+    opening the file.
+    """
+    status = str(finding.get("validation_status") or "")
+    if status == "suppressed":
+        kind = str(finding.get("suppression_kind") or "")
+        leaf = SUPPRESSION_BUCKETS.get(kind, SUPPRESSION_UNSPECIFIED)
+        return "suppressed/%s" % leaf
+    if status == "needs_review":
+        return "needs-review"
+    if status == "validated":
+        severity = str(finding.get("severity") or "")
+        priority = str(finding.get("priority") or "")
+        urgent = (severity in SEVERITIES_OWING_ACTION
+                  or priority in PRIORITIES_OWING_ACTION)
+        return "validated/%s" % ("remediate-now" if urgent else "schedule")
+    return "unvalidated"
+
+
+def bucket_is_validated(bucket: str) -> bool:
+    """True when a bucket holds findings that are confirmed vulnerabilities."""
+    return str(bucket).split("/")[0] == "validated"
+
+
+def bucket_reason(bucket: str) -> str:
+    """Why the findings in this bucket are not ticketable, or ``""`` if they are."""
+    if bucket_is_validated(bucket):
+        return ""
+    if bucket.startswith("suppressed/"):
+        return "dismissed by a recorded suppression; see suppression_reason"
+    if bucket == "needs-review":
+        return "not validated as a vulnerability; needs a human decision"
+    return "never assessed: the validation stage did not reach this finding"
+
+
+# --------------------------------------------------------------------------- #
 # CLI helpers shared by the generators
 # --------------------------------------------------------------------------- #
 
@@ -1003,7 +1102,7 @@ OUTPUT_NAMES = {
     "json": "SECURITY-AUDIT-REPORT.json",
     "manifest": "report-manifest.json",
     "index": "findings-index.json",
-    "tickets": "tickets",
+    "findings": FINDINGS_DIRNAME,
     "dataset": "findings.json",
     "metadata": "audit-metadata.json",
     "verification": "verification.json",

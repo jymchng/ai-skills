@@ -30,6 +30,7 @@ if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
 import finding_model as fm  # noqa: E402
+import report_model as rm  # noqa: E402
 
 FIXTURES = os.path.join(REPO, "tests", "fixtures")
 SCRATCH = os.path.join(REPO, ".scratch", "tests", "e2e")
@@ -204,22 +205,34 @@ def test_every_finding_has_its_own_json_and_the_index_describes_them_all():
     assert index["totals"]["findings"] == len(ids)
     assert index["totals"]["ticketable"] == sum(
         1 for entry in index["findings"] if entry["ticketable"])
-    ticket_dir = os.path.join(doc["reports"], "tickets")
-    on_disk = sorted(name for name in os.listdir(ticket_dir) if name.endswith(".json"))
+    findings_dir = os.path.join(doc["reports"], "findings")
+    on_disk = []
+    for root, _dirs, names in os.walk(findings_dir):
+        bucket = os.path.relpath(root, findings_dir).replace(os.sep, "/")
+        on_disk.extend((bucket, name) for name in names if name.endswith(".json"))
     assert len(on_disk) == len(ids)
     by_id = {entry["id"]: entry for entry in index["findings"]}
     for finding in dataset["findings"]:
         entry = by_id[finding["id"]]
-        ticket_path = os.path.join(ticket_dir, "%s.json" % finding["id"])
+        bucket = entry["disposition"]
+        ticket_path = os.path.join(findings_dir, *bucket.split("/"),
+                                   "%s.json" % finding["id"])
         assert os.path.isfile(ticket_path), ticket_path
         ticket = load(ticket_path)
         assert ticket["finding_id"] == finding["id"]
-        assert entry["ticket"]["sha256"] == hashlib.sha256(
+        # The bucket is stated in the file as well as in the directory, so a
+        # consumer never has to parse a path to learn what was decided.
+        assert ticket["disposition"] == bucket
+        assert entry["json"]["sha256"] == hashlib.sha256(
             open(ticket_path, "rb").read()).hexdigest()
         assert entry["category"] == finding["category"]
         assert entry["ticketable"] is (finding["validation_status"] == "validated")
         if not entry["ticketable"]:
             assert entry["ticketable_reason"]
+    # Every bucket exists on every run, even when it is empty: a missing
+    # directory would read as "this stage did not run".
+    for bucket in rm.FINDING_BUCKETS:
+        assert os.path.isdir(os.path.join(findings_dir, *bucket.split("/"))), bucket
 
 
 def test_needs_investigation_findings_get_a_file_but_are_not_ticketable():
@@ -231,7 +244,8 @@ def test_needs_investigation_findings_get_a_file_but_are_not_ticketable():
     for entry in review:
         assert entry["ticketable"] is False
         assert entry["ticketable_reason"]
-        assert os.path.isfile(entry["ticket"]["path"])
+        assert entry["disposition"] == "needs-review"
+        assert os.path.isfile(entry["json"]["path"])
 
 
 def test_every_finding_conforms_to_the_published_schema():
@@ -276,8 +290,8 @@ def test_no_raw_fixture_secret_reaches_any_deliverable():
                     ("SECURITY-AUDIT-REPORT.md", "SECURITY-AUDIT-REPORT.html",
                      "SECURITY-AUDIT-REPORT.json", "findings-index.json",
                      "report-manifest.json")]
-    deliverables += [os.path.join(reports, "tickets", name)
-                     for name in os.listdir(os.path.join(reports, "tickets"))]
+    for root, _dirs, names in os.walk(os.path.join(reports, "findings")):
+        deliverables += [os.path.join(root, name) for name in names]
     for path in deliverables:
         text = open(path, encoding="utf-8", errors="replace").read()
         for value in raw_values:

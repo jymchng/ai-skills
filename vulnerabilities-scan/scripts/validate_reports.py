@@ -10,7 +10,8 @@ gate before delivery. It checks three separate things.
     ``SECURITY-AUDIT-REPORT.md``, ``.html``, ``.json`` and ``report-manifest.json``
     must exist and parse. The HTML must be well-formed, self-contained (no
     ``<script src>``, ``<link href>``, ``@import`` or ``url(http...)``) and carry a
-    title; the JSON must match the ticket contract; the PDF must be a real PDF and
+    title; the JSON must match the per-finding contract and file every finding
+    under a bucket that exists; the PDF must be a real PDF and
     must have produced its text.
 
 **Agreement between formats**
@@ -237,26 +238,85 @@ def _json_report_article_ids(path: str) -> List[str]:
     return ids
 
 
+def _files_in_buckets(directory: str, problems: List[str],
+                      warnings: List[str]) -> List[Tuple[str, str, str]]:
+    """Every per-finding file on disk, as ``(bucket, name, full path)``.
+
+    The tree is walked rather than one flat directory read, because the layout
+    *is* the decision: a file whose depth does not name a known bucket is a
+    filing bug and cannot be silently ignored. Buckets that should exist are
+    checked as well, since an empty bucket and a stage that never ran look
+    identical from the inside.
+    """
+    found: List[Tuple[str, str, str]] = []
+    for root, _dirs, names in os.walk(directory):
+        bucket = os.path.relpath(root, directory).replace(os.sep, "/")
+        bucket = "" if bucket == "." else bucket
+        for name in sorted(names):
+            if not name.endswith(".json"):
+                warnings.append("findings/ holds a file that is not a finding: %s/%s"
+                                % (bucket, name))
+                continue
+            if bucket not in rm.FINDING_BUCKETS:
+                problems.append("findings/%s/%s is not in any known bucket" % (bucket, name))
+                continue
+            found.append((bucket, name, os.path.join(root, name)))
+    for bucket in rm.FINDING_BUCKETS:
+        if not os.path.isdir(os.path.join(directory, *bucket.split("/"))):
+            warnings.append("findings/%s/ was not created: an empty bucket must still exist"
+                            % bucket)
+    return found
+
+
+def _find_by_name(directory: str, name: str) -> Optional[str]:
+    """Find one file by name anywhere under the findings directory."""
+    for root, _dirs, names in os.walk(directory):
+        if name in names:
+            return os.path.join(root, name)
+    return None
+
+
 def _check_finding_file(entry: Mapping[str, Any], directory: str,
-                        problems: List[str]) -> None:
+                        problems: List[str], warnings: List[str]) -> None:
     """Prove one index entry really points at that finding's own JSON file.
 
     The register is only useful if the file it names exists, is readable, is
-    about the same finding and still has the digest the index recorded. A stale
-    ticket from an earlier run would otherwise look like a delivered finding.
+    about the same finding, sits in the bucket its own ``disposition`` implies
+    and still has the digest the index recorded. A stale ticket from an earlier
+    run would otherwise look like a delivered finding, and a finding filed under
+    ``schedule/`` when it is a confirmed Critical would look like a scheduling
+    choice rather than the filing bug it is.
     """
     finding_id = entry.get("id")
-    promised = entry.get("ticket") or {}
+    promised = entry.get("json") or {}
+    disposition = str(entry.get("disposition") or "")
     path = promised.get("path")
     if not path:
-        problems.append("findings index entry %s has no ticket path" % finding_id)
+        problems.append("findings index entry %s has no json path" % finding_id)
         return
-    candidates = [str(path), os.path.join(directory, os.path.basename(str(path)))]
-    resolved = next((candidate for candidate in candidates if os.path.exists(candidate)), None)
-    if resolved is None:
+    resolved = str(path)
+    if not os.path.exists(resolved) and disposition:
+        resolved = os.path.join(directory, *disposition.split("/"),
+                                os.path.basename(str(path)))
+    if not os.path.exists(resolved):
+        # The file may exist, in the wrong bucket. Saying so beats "missing":
+        # a mis-filed finding is a layout bug, a genuinely absent one is a
+        # failed run, and the two want different reactions.
+        resolved = _find_by_name(directory, os.path.basename(str(path))) or resolved
+    if not os.path.exists(resolved):
         problems.append("findings index entry %s points at a missing file: %s"
                         % (finding_id, path))
         return
+    if disposition == "suppressed/unspecified":
+        warnings.append("%s is suppressed with no suppression_kind: the dataset does "
+                        "not say whether it was a false positive, unreachable or "
+                        "accepted" % os.path.basename(resolved))
+    if disposition:
+        bucket = os.path.dirname(os.path.relpath(resolved, directory))
+        bucket = bucket.replace(os.sep, "/")
+        if bucket != disposition:
+            problems.append("%s is filed under %r but its disposition is %r"
+                            % (os.path.basename(resolved), bucket, disposition))
     try:
         document = json.loads(_read_text(resolved))
     except json.JSONDecodeError as exc:
@@ -265,6 +325,10 @@ def _check_finding_file(entry: Mapping[str, Any], directory: str,
     if str(document.get("finding_id")) != str(finding_id):
         problems.append("%s describes %s but the index says %s"
                         % (os.path.basename(resolved), document.get("finding_id"), finding_id))
+    if disposition and str(document.get("disposition") or "") != disposition:
+        problems.append("%s repeats disposition %r, the index says %r"
+                        % (os.path.basename(resolved), document.get("disposition"),
+                           disposition))
     claimed = promised.get("sha256")
     if claimed and _digest(resolved) != claimed:
         problems.append("%s does not match the digest recorded in the index"
@@ -514,18 +578,27 @@ def validate(outdir: str, dataset: Optional[str] = None,
                         problems.append("%s has no jira.%s" % (where, key))
                 if not str(ticket.get("fingerprint") or "").startswith("sha256:"):
                     problems.append("%s has no stable fingerprint" % where)
-            directory = os.path.join(outdir, rm.OUTPUT_NAMES["tickets"])
+            directory = os.path.join(outdir, rm.OUTPUT_NAMES["findings"])
             if os.path.isdir(directory):
-                on_disk = sorted(name for name in os.listdir(directory)
-                                 if name.endswith(".json"))
-                if all_finding_ids and len(on_disk) != len(all_finding_ids):
-                    problems.append("tickets/ holds %d files, expected one per finding (%d)"
-                                    % (len(on_disk), len(all_finding_ids)))
-                for name in on_disk:
+                found = _files_in_buckets(directory, problems, warnings)
+                if all_finding_ids and len(found) != len(all_finding_ids):
+                    problems.append("findings/ holds %d files, expected one per finding (%d)"
+                                    % (len(found), len(all_finding_ids)))
+                for bucket, name, full in found:
                     try:
-                        json.loads(_read_text(os.path.join(directory, name)))
+                        json.loads(_read_text(full))
                     except json.JSONDecodeError as exc:
-                        problems.append("tickets/%s is not valid JSON: %s" % (name, exc))
+                        problems.append("findings/%s/%s is not valid JSON: %s"
+                                        % (bucket, name, exc))
+                # A non-empty unvalidated/ bucket means findings reached delivery
+                # without a verdict: they are filed and named, never presented as
+                # vulnerabilities, but the stage that should have decided them
+                # did not run.
+                stranded = [name for bucket, name, _ in found if bucket == "unvalidated"]
+                if stranded:
+                    warnings.append("%d finding(s) reached delivery unassessed in "
+                                    "findings/unvalidated/: %s"
+                                    % (len(stranded), ", ".join(sorted(stranded)[:5])))
 
                 # ---- per-finding register ---------------------------------- #
                 index_path = os.path.join(outdir, rm.OUTPUT_NAMES["index"])
@@ -554,13 +627,13 @@ def validate(outdir: str, dataset: Optional[str] = None,
                         if len(set(index_ids)) != len(index_ids):
                             problems.append("%s repeats a finding id" % rm.OUTPUT_NAMES["index"])
                         for entry in entries:
-                            _check_finding_file(entry, directory, problems)
+                            _check_finding_file(entry, directory, problems, warnings)
                         checked["findings_index"] = {
                             "path": index_path, "sha256": _digest(index_path),
                             "findings": len(entries),
                             "totals": index.get("totals")}
             else:
-                warnings.append("no tickets/ directory: per-finding JSON files were not written")
+                warnings.append("no findings/ directory: per-finding JSON files were not written")
 
     # ---- PDF --------------------------------------------------------------- #
     pdf_path = os.path.join(outdir, rm.OUTPUT_NAMES["pdf"])

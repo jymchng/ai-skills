@@ -88,7 +88,7 @@ A control mitigates only when it is on the path **and** effective. Record each s
 
 | Outcome | Recorded as |
 | - | - |
-| Effective control found | suppressed, `suppression_reason: "parameterised query at line 91"` |
+| Effective control found | suppressed, `suppression_kind: not_exploitable`, `suppression_reason: "parameterised query at line 91"` |
 | Partial/fragile control | finding kept, confidence lowered one step, fragility noted in `impact` |
 | Control present but bypassable | finding kept at full confidence, bypass explained in `evidence` |
 | No control, nothing to search | finding at full confidence |

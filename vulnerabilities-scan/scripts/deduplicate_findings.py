@@ -330,6 +330,8 @@ def _merge_into(keep: Dict[str, Any], other: Dict[str, Any], reason: str) -> Non
     if other.get("validation_status") == "suppressed" and keep.get("validation_status") != "suppressed":
         keep["validation_status"] = "suppressed"
         keep["suppression_reason"] = other.get("suppression_reason") or "suppressed by a contributing engine"
+        if other.get("suppression_kind"):
+            keep["suppression_kind"] = other["suppression_kind"]
         notes.append("suppression carried over from %s"
                      % (other.get("sources") or [{}])[0].get("tool", "a contributing engine"))
 

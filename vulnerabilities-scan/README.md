@@ -95,11 +95,11 @@ policy, the Debian/Fedora caveat for `trivy`, and the three PATH traps (`go inst
 
 **Optional — PDF.** `pandoc` plus a LaTeX engine (`xelatex`) produce
 `SECURITY-AUDIT-REPORT.pdf`. Without them the run still writes Markdown, HTML, JSON, the index and
-the tickets, and records the PDF as `unavailable` with the exact reason (missing binary versus LaTeX
-error with the log tail). A missing PDF is never a fabricated file.
+the per-finding files, and records the PDF as `unavailable` with the exact reason (missing binary
+versus LaTeX error with the log tail). A missing PDF is never a fabricated file.
 
-**Tested on.** Python 3.13.13 with no network and no external scanners installed; 400 tests pass
-(≈60 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
+**Tested on.** Python 3.13.13 with no network and no external scanners installed; 433 tests pass
+(≈51 s). The scripts parse under Python 3.8 grammar, but 3.8–3.10 are untested — treat 3.13 as the
 verified interpreter and 3.8 as a documented floor, not a promise.
 
 ---
@@ -235,11 +235,26 @@ security-audit/
     ├── SECURITY-AUDIT-REPORT.html  self-contained: no CDN, no external font, opens offline
     ├── SECURITY-AUDIT-REPORT.pdf   cover page, TOC, page numbers (needs pandoc + xelatex)
     ├── SECURITY-AUDIT-REPORT.json  the same content as data
-    ├── findings-index.json         one entry per finding + run totals
+    ├── findings-index.json         one entry per finding: its bucket, file path, digest + run totals
     ├── report-manifest.json        run identity, counts, size and SHA-256 of every artefact
-    └── tickets/
-        └── VULN-001.json …         exactly one JSON per finding, ticketable or not
+    └── findings/                   one JSON per finding, filed by what was decided about it
+        ├── validated/
+        │   ├── remediate-now/      confirmed vulnerability, fix it now
+        │   └── schedule/           confirmed vulnerability, schedule the fix
+        ├── needs-review/           the evidence could not settle it; a person must
+        ├── unvalidated/            nothing assessed this — a gap, never a vulnerability
+        └── suppressed/
+            ├── false-positive/     reported, and it is not there
+            ├── not-exploitable/    real weakness, no attacker can reach it
+            ├── accepted-risk/      real and reachable; the owner signed it off
+            └── unspecified/        closed without recording which of the three it was
 ```
+
+The two-level layout answers two different questions. The first directory is the **verdict** — is this
+a vulnerability? The second, under `validated/`, is the **urgency** — fix it now, or schedule it. A
+single level could not do both: a confirmed Critical filed next to an unassessed pattern match, under
+one name that says neither, is how a report loses its reader. Every leaf directory is created on every
+run, even when empty, so a zero reads as a zero and not as a stage that never ran.
 
 Each finding in `findings.json` carries the fields the report needs: `id`, `title`, `category`,
 `cwe`, `owasp_reference`, `severity`, `cvss_version`/`cvss_score`/`cvss_vector` (or an explicit
@@ -248,9 +263,9 @@ scenario, preconditions, impact, evidence with line context, `validation_status`
 recommended fix and references. `schemas/finding.schema.json` is the formal contract, and
 `scripts/finding_model.py validate findings.json` checks a dataset against it.
 
-Suppressed findings are not deleted: they stay in the dataset with the suppression reason, count in
-the totals, and are the one thing excluded from the human-readable report — which is why the HTML
-article count and the dataset count legitimately differ.
+Suppressed findings are not deleted: they stay in the dataset with the suppression reason and its
+kind, count in the totals, and are the one thing excluded from the human-readable report — which is
+why the HTML article count and the dataset count legitimately differ.
 
 ---
 
@@ -319,7 +334,7 @@ Everything is a flag on the stage that owns the concern; there is no config file
 | Known raw secrets to hunt for | `--secrets-file FILE` | `validate_findings.py`, `validate_reports.py` |
 | Refuse to write on a leak (default on) | `--fail-on-leak` / `--no-fail-on-leak` | `validate_findings.py` |
 | Report formats | `--formats markdown,html,pdf,json` | `generate_reports.py` |
-| Ticket output directory | `--ticket-dir DIR` | `generate_reports.py` |
+| Per-finding output directory | `--findings-dir DIR` (alias: `--ticket-dir`) | `generate_reports.py`, `generate_json.py` |
 | Run metadata (repository, commit, date, environment) | `--metadata audit-metadata.json` | `generate_reports.py`, `generate_pdf.py` |
 | Require a PDF | `--require-pdf` | `validate_reports.py` |
 | PDF timeout / keep LaTeX build | `--timeout N`, `--keep-build`, `--workdir DIR` | `generate_pdf.py` |
@@ -397,7 +412,7 @@ State these in the report, not just in this file.
 
 ```bash
 cd vulnerabilities-scan
-python3 -m pytest tests -q          # 400 tests, ~60 s, offline, writes only under .scratch/
+python3 -m pytest tests -q          # 433 tests, ~51 s, offline, writes only under .scratch/
 ```
 
 - `tests/fixtures/vulnerable-app/` — 34 files covering the 20 required vulnerability classes across

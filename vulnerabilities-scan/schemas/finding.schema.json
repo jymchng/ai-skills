@@ -273,6 +273,11 @@
           "type": ["string", "null"],
           "description": "Required when validation_status is suppressed; the record is kept so the next audit does not rediscover it."
         },
+        "suppression_kind": {
+          "type": ["string", "null"],
+          "enum": ["false_positive", "not_exploitable", "accepted_risk", null],
+          "description": "Why a suppressed finding was closed: false_positive (the flaw is not there), not_exploitable (it is there but unreachable) or accepted_risk (real, reachable, signed off). Decides which suppressed/ directory the finding is filed in; absent, it is filed as unspecified."
+        },
         "locations": {
           "type": "array",
           "description": "Additional sites for one root cause (copy-pasted helper).",
@@ -306,6 +311,10 @@
             "required": ["suppression_reason"],
             "properties": { "suppression_reason": { "type": "string", "minLength": 3 } }
           }
+        },
+        {
+          "if": { "properties": { "suppression_kind": { "type": "string" } }, "required": ["suppression_kind"] },
+          "then": { "properties": { "validation_status": { "const": "suppressed" } } }
         },
         {
           "if": { "properties": { "severity": { "const": "Informational" } } },
